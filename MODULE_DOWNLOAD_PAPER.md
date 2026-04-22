@@ -341,17 +341,25 @@ download_report.csv                        # Summary report
 
 ## 🌐 API Sources (Priority Order)
 
-| Source | Speed | Reliability | Auth | Notes |
-|--------|-------|-------------|------|-------|
-| Playwright DOI | Slow | ⭐⭐⭐⭐⭐ | No | Best for paywalled articles |
-| doi2pdf | Fast | ⭐⭐⭐⭐ | No | Direct conversion |
-| OpenAlex | Fast | ⭐⭐⭐⭐ | No | Open access links |
-| Crossref | Fast | ⭐⭐⭐ | No | Publisher metadata |
-| Unpywall | Fast | ⭐⭐⭐⭐ | Email | OA database |
-| arXiv | Very Fast | ⭐⭐⭐⭐⭐ | No | Preprints only |
-| Scidownl | Medium | ⭐⭐⭐ | No | Sci-Hub wrapper |
-| Sci-Hub Direct | Fast | ⭐⭐ | No | Unreliable, blacklisted |
-| Playwright Stealth | Slow | ⭐⭐⭐ | No | Last resort |
+| Source | Speed | Reliability | Auth | Method | Notes |
+|--------|-------|-------------|------|--------|-------|
+| Playwright DOI | Slow | ⭐⭐⭐⭐⭐ | No | Browser | Handles iframes, JS rendering |
+| doi2pdf | Fast | ⭐⭐⭐⭐ | No | HTTP | Direct conversion |
+| OpenAlex | Fast | ⭐⭐⭐⭐⭐ | No | **HTTP + Playwright** | API query + browser for protected URLs |
+| Crossref | Fast | ⭐⭐⭐ | No | HTTP | Publisher metadata |
+| Unpywall | Fast | ⭐⭐⭐⭐ | Email | HTTP | OA database |
+| arXiv | Very Fast | ⭐⭐⭐⭐⭐ | No | HTTP | Preprints only |
+| Scidownl | Medium | ⭐⭐⭐ | No | HTTP | Sci-Hub wrapper |
+| Sci-Hub Direct | Fast | ⭐⭐ | No | HTTP | Unreliable, blacklisted |
+| Playwright Stealth | Slow | ⭐⭐⭐ | No | Browser | Last resort |
+
+### OpenAlex Strategy (Enhanced):
+1. **Query API**: Get OA links from OpenAlex (fixed gzip issue)
+2. **Try HTTP**: Fast path for most OA papers
+3. **Use Playwright**: If HTTP returns 403, establish browser session
+4. **Retry with cookies**: Some publishers require session cookies
+
+**Recent Fix**: OpenAlex API was returning gzip-compressed responses. Fixed by setting `Accept-Encoding: identity`. Playwright fallback for protected URLs like APS journals.
 
 ---
 
