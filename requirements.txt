@@ -1,5 +1,7 @@
 # Academic Graph Miner - Python Dependencies
 # Updated: 2026-04-22
+# Note: PDF to Markdown conversion handled by external program
+#       (PyTorch/marker-pdf not needed for this project)
 
 # Core Data Processing
 pandas>=2.0.0
@@ -13,10 +15,9 @@ beautifulsoup4>=4.12.0
 urllib3>=2.0.0
 httpx>=0.28.0
 
-# PDF Processing
+# PDF Processing (text extraction only, not conversion)
 pdfplumber>=0.9.0
 pypdfium2>=4.25.0
-marker-pdf>=1.0.0
 
 # Paper Downloading Sources
 doi2pdf>=0.4.0
@@ -37,11 +38,6 @@ pyvis>=0.3.2
 # Web Framework
 Flask>=3.0.0
 Werkzeug>=3.0.0
-
-# AI/ML (GPU acceleration for marker-pdf)
-torch==2.7.0
-torchvision==0.22.0
-torchaudio==2.11.0
 
 # Optional: LLM API clients (for future enhancements)
 anthropic>=0.46.0
