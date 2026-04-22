@@ -1,8 +1,9 @@
 # 📥 Download Paper Module Reference
 
-**File**: `download_paper.py` (1,534 lines)  
+**File**: `download_paper.py` (1,748 lines)  
 **Purpose**: Multi-source parallel PDF downloader with supplementary material detection  
-**Status**: Production-ready
+**Status**: Production-ready  
+**Note**: PDF to Markdown conversion removed (handled by separate program)
 
 ---
 
@@ -11,7 +12,7 @@
 ### Basic Usage
 
 ```python
-from download_paper import process_doi_list, download_pdf, pdf_to_markdown
+from download_paper import process_doi_list, download_pdf
 
 # Batch download 
 dois = ["10.1038/nphys2439", "10.1103/PhysRevE.101.033202"]
@@ -45,17 +46,17 @@ print(f"File: {pdf_path}")
 
 **Returns**: `pd.DataFrame` with columns:
 ```
-DOI, Title, Year, PDF_Path, File_Size_MB, Markdown_Path, 
-Supplementary_Paths, Download_Status, Error_Message
+DOI, Title, Year, PDF_Status, PDF_Path, File_Size_MB, 
+Supplementary_Status, Supplementary_Files
 ```
 
+
 **Behavior**:
-1. Pre-scan: Check if PDF/MD already exist (skip if found)
+1. Pre-scan: Check if PDF already exists (skip if found)
 2. Download: Attempt 9 sources in priority order
 3. Validate: Verify PDF structure (magic bytes, %%EOF marker)
-4. Generate: Convert PDF → Markdown (MarkItDown or Marker)
-5. Supplements: Search PDF text + fetch from Datahugger
-6. Report: Generate CSV with all results
+4. Supplements: Search PDF text + fetch from Datahugger
+5. Report: Generate CSV with all results
 
 **Example**:
 ```python
@@ -63,7 +64,7 @@ df = process_doi_list(
     ["10.1038/nphys2439"],
     output_base_dir="my_papers/"
 )
-print(df[['DOI', 'Title', 'PDF_Path', 'Markdown_Path', 'Download_Status']])
+print(df[['DOI', 'Title', 'PDF_Path', 'File_Size_MB', 'Supplementary_Status']])
 ```
 
 ---
@@ -221,60 +222,17 @@ else:
 
 ---
 
-#### `pdf_to_markdown(pdf_path: str, md_path: str) -> bool`
-
-**Purpose**: Convert PDF to Markdown for AI/knowledge base consumption
-
-**Implementation**:
-1. Tries MarkItDown first (faster, ~0.5-2s)
-2. Falls back to Marker if MarkItDown unavailable (~2-5s)
-3. Adds metadata header (source PDF, conversion timestamp)
-4. Returns immediately on first success
-
-**Parameters**:
-- `pdf_path` (str): Path to PDF file
-- `md_path` (str): Path where Markdown should be saved
-
-**Returns**: True if successful, False otherwise
-
-**Output Format**:
-```markdown
-# 2012--Coherent synchrotron emission from...
-
-**Source PDF**: 2012--Coherent synchrotron emission from....pdf
-**Converted**: 2026-04-21 12:34:56
-
----
-
-[Full article text in Markdown format...]
-```
-
-**Dependencies**:
-- Optional: `pip install markitdown` (recommended)
-- Optional: `pip install marker` (fallback)
-
-**Example**:
-```python
-if pdf_to_markdown("paper.pdf", "paper.md"):
-    print("✓ Markdown generated")
-    print(f"File size: {os.path.getsize('paper.md')} bytes")
-```
-
----
-
 #### `check_paper_already_exists(output_dir: str, year: int, title: str, doi: str) -> Optional[str]`
 
-**Purpose**: Smart deduplication - check if PDF already exists and auto-generate missing MD
+**Purpose**: Smart deduplication - check if PDF already exists
 
 **Logic**:
 1. Check if `{year}--{sanitized_title}.pdf` exists
    - If NO → return None (needs downloading)
-   - If YES → check for `.md` file
-2. If PDF exists but MD missing → auto-generate MD
-3. Return PDF path if found
+   - If YES → return PDF path
 
 **Returns**: 
-- Full path to PDF if found (with MD ensured)
+- Full path to PDF if found
 - None if PDF doesn't exist
 
 **Example**:
@@ -383,7 +341,6 @@ All downloaded files follow this pattern:
 
 ```
 {year}--{sanitized_title}.pdf              # Main PDF
-{year}--{sanitized_title}.md               # Markdown (auto-generated)
 {year}--{sanitized_title}--supplementary.pdf  # Supplements
 download_report.csv                        # Summary report
 ```
@@ -391,9 +348,10 @@ download_report.csv                        # Summary report
 **Example**:
 ```
 2012--Coherent synchrotron emission from electron nanobunches formed in relativistic laser-plasma interactions.pdf
-2012--Coherent synchrotron emission from electron nanobunches formed in relativistic laser-plasma interactions.md
 2012--Coherent synchrotron emission from electron nanobunches formed in relativistic laser-plasma interactions--supplementary.pdf
 ```
+
+**Note**: PDF to Markdown conversion is handled by a separate program, not this module.
 
 ---
 
@@ -452,10 +410,9 @@ export PLAYWRIGHT_BROWSER="chromium"
 |-----------|------|-------|
 | PDF download (avg) | 5-30s | Depends on source |
 | PDF validation | 50-100ms | Magic byte check |
-| PDF → Markdown | 0.5-2s | MarkItDown (fast) or 2-5s (Marker) |
 | Supplementary detection (PDF) | <1s | Text search |
 | Supplementary detection (web) | 1-10s | Playwright fallback |
-| Batch 100 papers | 8-15 mins | Parallel-capable |
+| Batch 100 papers | 8-15 mins | Download only |
 
 ---
 
@@ -464,15 +421,14 @@ export PLAYWRIGHT_BROWSER="chromium"
 The output DataFrame contains:
 
 ```
-DOI                    - Paper DOI
-Title                  - Paper title
-Year                   - Publication year
-PDF_Path               - Path to downloaded PDF
-File_Size_MB           - PDF file size in MB
-Markdown_Path          - Path to generated Markdown
-Supplementary_Paths    - List of supplement paths (JSON)
-Download_Status        - "success" or "failed"
-Error_Message          - Failure reason (if any)
+DOI                      - Paper DOI
+Title                    - Paper title
+Year                     - Publication year
+PDF_Status               - Download status message
+PDF_Path                 - Path to downloaded PDF
+File_Size_MB             - PDF file size in MB
+Supplementary_Status     - Supplementary finding status
+Supplementary_Files      - List of supplement paths
 ```
 
 ---
@@ -485,11 +441,7 @@ Error_Message          - Failure reason (if any)
 
 ### Problem: PDF shows as 0.0MB
 - **Cause**: Downloaded file is HTML (fake PDF from captcha page)
-- **Solution**: validation catches these; check error_message in CSV
-
-### Problem: Markdown not generated
-- **Cause**: Neither MarkItDown nor Marker installed
-- **Solution**: `pip install markitdown` (recommended)
+- **Solution**: validation catches these; check error message in CSV
 
 ### Problem: Supplementary not found
 - **Cause**: Either no supplements exist or they're embedded in PDF body
@@ -555,6 +507,7 @@ if len(failed) > 0:
 
 ---
 
-**Last Updated**: 2026-04-21  
-**Version**: 3.0  
-**Status**: ✅ Production-ready
+**Last Updated**: 2026-04-22  
+**Version**: 4.0  
+**Status**: ✅ Production-ready (PDF to Markdown conversion removed)
+

@@ -51,18 +51,6 @@ import datahugger
 from playwright.sync_api import sync_playwright
 import pdfplumber
 
-# PDF to Markdown conversion
-try:
-    from markitdown import MarkItDown
-    HAS_MARKITDOWN = True
-except ImportError:
-    HAS_MARKITDOWN = False
-
-try:
-    from marker.convert import convert_single_pdf
-    HAS_MARKER = True
-except ImportError:
-    HAS_MARKER = False
 
 # Configure Unpywall with your email (replace with your actual email)
 UnpywallCredentials("your_email@gmail.com")
@@ -88,80 +76,6 @@ HEADERS = {
 REQUEST_DELAY = (2, 5)  # random delay range in seconds
 
 # ========== Helper functions ==========
-def pdf_to_markdown(pdf_path: str, md_path: str) -> bool:
-    """
-    Convert PDF to Markdown using MarkItDown or Marker.
-
-    Args:
-        pdf_path: Path to PDF file
-        md_path: Path to output Markdown file
-
-    Returns:
-        True if conversion successful, False otherwise
-    """
-    try:
-        if not os.path.exists(pdf_path):
-            return False
-
-        print(f"    📄 Converting PDF to Markdown: {os.path.basename(pdf_path)}")
-
-        # Try MarkItDown first (usually faster and more reliable)
-        if HAS_MARKITDOWN:
-            try:
-                md = MarkItDown()
-                result = md.convert(pdf_path)
-
-                if result and result.text_content:
-                    with open(md_path, 'w', encoding='utf-8') as f:
-                        # Add metadata header
-                        header = f"""# {os.path.basename(pdf_path).replace('.pdf', '')}
-
-**Source PDF**: {os.path.basename(pdf_path)}
-**Converted**: {time.strftime('%Y-%m-%d %H:%M:%S')}
-
----
-
-"""
-                        f.write(header)
-                        f.write(result.text_content)
-
-                    print(f"    ✅ Converted using MarkItDown ({os.path.getsize(md_path)} bytes)")
-                    return True
-            except Exception as e:
-                print(f"    ⚠️ MarkItDown conversion failed: {str(e)[:60]}")
-
-        # Fallback to Marker if available
-        if HAS_MARKER:
-            try:
-                result = convert_single_pdf(pdf_path)
-
-                if result and result.get('text'):
-                    with open(md_path, 'w', encoding='utf-8') as f:
-                        header = f"""# {os.path.basename(pdf_path).replace('.pdf', '')}
-
-**Source PDF**: {os.path.basename(pdf_path)}
-**Converted**: {time.strftime('%Y-%m-%d %H:%M:%S')}
-
----
-
-"""
-                        f.write(header)
-                        f.write(result['text'])
-
-                    print(f"    ✅ Converted using Marker ({os.path.getsize(md_path)} bytes)")
-                    return True
-            except Exception as e:
-                print(f"    ⚠️ Marker conversion failed: {str(e)[:60]}")
-
-        # If neither library works
-        print(f"    ❌ No PDF conversion tool available")
-        return False
-
-    except Exception as e:
-        print(f"    ❌ PDF to Markdown conversion error: {e}")
-        return False
-
-
 def is_valid_pdf(file_path: str) -> bool:
     """Check if file is a valid PDF by checking magic number and other indicators."""
     try:
@@ -404,23 +318,10 @@ def check_paper_already_exists(output_dir: str, year: str, title: str, doi: str)
                         pdf_path = full_path
                         break
 
-        # If PDF found, check and generate Markdown if needed
+        # If PDF found, return it
         if pdf_path:
-            # Generate corresponding markdown path
-            pdf_base = os.path.splitext(pdf_path)[0]
-            md_path = f"{pdf_base}.md"
-
-            # If Markdown doesn't exist, try to generate it
-            if not os.path.exists(md_path):
-                print(f"    📝 Markdown not found, generating from PDF...")
-                success = pdf_to_markdown(pdf_path, md_path)
-                if success:
-                    print(f"       ✅ Markdown generated: {os.path.basename(md_path)}")
-                else:
-                    print(f"       ⚠️ Markdown generation skipped (no tool available)")
-                    # Continue anyway - PDF is still valid
-
             return pdf_path
+
 
     except Exception as e:
         print(f"    Error checking for existing file: {e}")
@@ -1727,29 +1628,11 @@ def process_doi_list(doi_list: List[str], output_base_dir: str = "downloaded_pap
 
         # Calculate file size if PDF was downloaded
         file_size_mb = 0.0
-        md_path = None
 
         if pdf_path and os.path.exists(pdf_path):
             file_size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
 
-            # Generate Markdown from PDF
-            pdf_base = os.path.splitext(pdf_path)[0]
-            md_path = f"{pdf_base}.md"
-
-            if not os.path.exists(md_path):
-                print(f"  📝 Generating Markdown from PDF...")
-                if pdf_to_markdown(pdf_path, md_path):
-                    print(f"     ✅ Markdown saved: {os.path.basename(md_path)}")
-                    md_size = os.path.getsize(md_path) / (1024 * 1024)
-                    print(f"     📊 Markdown size: {md_size:.2f}MB")
-                else:
-                    print(f"     ⚠️ Markdown generation skipped")
-                    md_path = None
-            else:
-                print(f"  📝 Markdown already exists: {os.path.basename(md_path)}")
-
-
-        # 3. Download supplementary materials (pass pdf_path for text analysis)
+        # Download supplementary materials (pass pdf_path for text analysis)
         supp_status, supp_files = download_supplementary_materials(doi, output_base_dir, title, year, pdf_path)
         print(f"  Supplementary status: {supp_status}")
 
@@ -1760,7 +1643,6 @@ def process_doi_list(doi_list: List[str], output_base_dir: str = "downloaded_pap
             "PDF_Status": pdf_status,
             "PDF_Path": pdf_path if pdf_path else "",
             "File_Size_MB": file_size_mb,
-            "Markdown_Path": md_path if md_path else "",
             "Supplementary_Status": supp_status,
             "Supplementary_Files": "; ".join(supp_files) if supp_files else ""
         })
