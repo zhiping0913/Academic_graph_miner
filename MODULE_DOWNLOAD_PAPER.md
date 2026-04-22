@@ -68,6 +68,64 @@ print(df[['DOI', 'Title', 'PDF_Path', 'Markdown_Path', 'Download_Status']])
 
 ---
 
+### Universal PDF Downloader (NEW in v4.1)
+
+#### `download_pdf_from_url(pdf_url: str, output_path: str, source_name: str = "unknown", use_playwright: bool = True) -> bool`
+
+**Purpose**: Unified PDF downloader with HTTP + Playwright fallback for protected URLs
+
+**Parameters**:
+- `pdf_url` (str): Direct URL to PDF file
+- `output_path` (str): Where to save the PDF
+- `source_name` (str): Download source name for logging (e.g., "crossref_links", "openalex")
+- `use_playwright` (bool): Enable Playwright fallback (default: True)
+
+**Strategy**:
+```
+1. Try Direct HTTP (FAST - works for ~95% of papers)
+   └─ If success: Save and return ✓
+
+2. If HTTP fails (403/protected):
+   └─ Load URL in headless browser (Playwright)
+   └─ Extract session cookies
+   └─ Retry HTTP download with cookies
+   └─ If success: Save and return ✓
+
+3. If both fail: Return False
+```
+
+**Returns**: `True` if download succeeded, `False` otherwise
+
+**Used by**:
+- `download_via_crossref_links()` - Crossref API PDF links
+- `download_via_openalex()` - OpenAlex OA URLs
+- `download_single_supplementary()` - Supplementary materials
+
+**Benefits** (v4.1 refactoring):
+- ✅ Eliminates code duplication (3 functions consolidated)
+- ✅ Consistent error handling and retry logic
+- ✅ Unified logging for all PDF downloads
+- ✅ Automatic fallback for protected URLs
+- ✅ Better success rate for gated content
+
+**Example**:
+```python
+from download_paper import download_pdf_from_url
+
+# Works for open access
+success = download_pdf_from_url(
+    pdf_url="https://doi.org/10.1038/nphys2439.pdf",
+    output_path="/tmp/paper.pdf",
+    source_name="openalex",
+    use_playwright=True
+)
+
+# Also works for APS/Springer with session cookies
+# (transparent to caller)
+```
+
+---
+
 #### `download_pdf(doi: str, output_dir: str, title: str, year: int) -> Tuple[str, str]`
 
 **Purpose**: Download a single PDF with fallback sources
