@@ -1113,27 +1113,104 @@ def download_via_crossref_links(doi: str, output_path: str) -> bool:
     return False
 
 def download_via_openalex(doi: str, output_path: str) -> bool:
-    """Try to fetch OA PDF from OpenAlex API."""
+    """Try to fetch OA PDF from OpenAlex API, using Playwright for protected URLs."""
     try:
         url = f"https://api.openalex.org/works/https://doi.org/{doi}"
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        print(f"    openalex: Querying API...")
+
+        # 为OpenAlex使用特殊headers，避免gzip压缩问题
+        api_headers = HEADERS.copy()
+        api_headers['Accept-Encoding'] = 'identity'  # 禁用gzip
+
+        resp = requests.get(url, headers=api_headers, timeout=15)
+
         if resp.status_code != 200:
+            print(f"    openalex: API error {resp.status_code}")
             return False
 
-        data = resp.json()
+        # 安全地解析JSON
+        try:
+            data = resp.json()
+        except Exception as json_err:
+            print(f"    openalex: JSON parse error: {json_err}")
+            return False
+
         oa_url = data.get('open_access', {}).get('oa_url')
 
-        if oa_url:
+        if not oa_url:
+            print(f"    openalex: No OA URL found")
+            return False
+
+        print(f"      Found OA URL: {oa_url[:80]}")
+
+        # 首先尝试简单的requests下载（快速路径）
+        try:
+            print(f"      Trying direct HTTP download...")
             pdf_resp = requests.get(oa_url, headers=HEADERS, timeout=30)
             if pdf_resp.status_code == 200 and is_valid_pdf_response(pdf_resp):
                 with open(output_path, 'wb') as f:
                     f.write(pdf_resp.content)
                 if is_valid_pdf(output_path):
-                    print(f"    openalex result: True")
+                    print(f"    openalex result: True (direct HTTP)")
                     return True
                 else:
-                    # 验证失败，删除文件
                     os.remove(output_path)
+        except Exception as e:
+            print(f"      Direct HTTP failed: {str(e)[:50]}")
+
+        # 如果直接下载失败，尝试使用Playwright（用于需要JavaScript/浏览器的链接）
+        if not os.path.exists(output_path):
+            print(f"      Trying Playwright for protected URL...")
+            try:
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(
+                        headless=True,
+                        args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
+                    )
+
+                    context = browser.new_context(
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    )
+                    page = context.new_page()
+
+                    try:
+                        # 访问PDF链接
+                        print(f"      Loading {oa_url[:60]}...")
+                        response = page.goto(oa_url, wait_until='domcontentloaded', timeout=20000)
+
+                        if response and response.status in [200, 304]:
+                            page.wait_for_timeout(2000)
+
+                            # 检查是否获得了cookie/session能够访问PDF
+                            cookies = context.cookies()
+                            cookie_dict = {c['name']: c['value'] for c in cookies}
+
+                            # 用获得的cookies重新尝试下载
+                            pdf_resp = requests.get(
+                                oa_url,
+                                headers=HEADERS,
+                                cookies=cookie_dict,
+                                timeout=30
+                            )
+
+                            if pdf_resp.status_code == 200 and is_valid_pdf_response(pdf_resp):
+                                with open(output_path, 'wb') as f:
+                                    f.write(pdf_resp.content)
+                                if is_valid_pdf(output_path):
+                                    print(f"    openalex result: True (Playwright session)")
+                                    browser.close()
+                                    return True
+                                else:
+                                    os.remove(output_path)
+
+                    except Exception as e:
+                        print(f"      Playwright error: {str(e)[:50]}")
+                    finally:
+                        browser.close()
+
+            except Exception as e:
+                print(f"      Playwright failed: {str(e)[:50]}")
+
     except Exception as e:
         print(f"    openalex exception: {e}")
 
