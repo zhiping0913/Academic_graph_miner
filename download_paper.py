@@ -482,6 +482,137 @@ def download_via_scihub_direct(doi: str, output_path: str) -> bool:
     print(f"    scihub_direct result: False (all domains failed or returned HTML)")
     return False
 
+
+def download_via_playwright_enhanced(doi: str, output_path: str) -> bool:
+    """
+    增强版本的Playwright下载器，处理高级机器人检测（如APS）。
+    针对需要Cloudflare验证和额外反爬虫检测的网站。
+    """
+    try:
+        url = f"https://doi.org/{doi}"
+        print(f"    playwright_enhanced: Accessing {url}")
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-gpu',
+                ]
+            )
+
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='en-US',
+                timezone_id='America/New_York',
+            )
+
+            page = context.new_page()
+
+            # 隐藏所有自动化检测标记
+            page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                });
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5],
+                });
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en'],
+                });
+                window.chrome = { runtime: {} };
+            """)
+
+            try:
+                # 添加随机延迟模拟真实用户
+                import random
+                random_delay = random.uniform(1.0, 3.0)
+                print(f"      Adding delay: {random_delay:.1f}s")
+                page.wait_for_timeout(int(random_delay * 1000))
+
+                # 访问页面，使用 'domcontentloaded' 避免超时
+                print(f"      Navigating to {url}...")
+                response = page.goto(url, wait_until='domcontentloaded', timeout=20000)
+                print(f"      Response: {response.status if response else 'None'}")
+
+                # 等待额外内容加载
+                page.wait_for_timeout(3000)
+
+                # 处理重定向后的最终URL
+                print(f"      Final URL: {page.url}")
+
+                # 检查是否需要处理iframe
+                iframes = page.query_selector_all('iframe')
+                print(f"      Found {len(iframes)} iframe(s)")
+
+                # 获取页面内容
+                content = page.content()
+
+                # 查找PDF下载链接
+                pdf_links = []
+                pdf_selectors = [
+                    'a[href*=".pdf"]',
+                    'a[href*="pdf"]',
+                    'a[data-article-pdf]',
+                    'button[aria-label*="PDF"]',
+                    'a[aria-label*="PDF"]',
+                    '[role="button"][aria-label*="view"][aria-label*="PDF"]',
+                ]
+
+                for selector in pdf_selectors:
+                    try:
+                        elements = page.query_selector_all(selector)
+                        for elem in elements:
+                            href = elem.get_attribute('href')
+                            if href and not href.startswith('javascript:'):
+                                pdf_links.append(href)
+                                print(f"      Found PDF link: {href[:80]}")
+                    except:
+                        continue
+
+                # 尝试下载找到的PDF
+                for pdf_url in pdf_links:
+                    try:
+                        print(f"      Downloading from: {pdf_url[:80]}")
+                        # 使用browser的download feature如果是绝对链接
+                        if pdf_url.startswith('http'):
+                            pdf_resp = requests.get(pdf_url, headers=HEADERS, timeout=30)
+                        else:
+                            full_url = urljoin(page.url, pdf_url)
+                            pdf_resp = requests.get(full_url, headers=HEADERS, timeout=30)
+
+                        if pdf_resp.status_code == 200 and is_valid_pdf_response(pdf_resp):
+                            with open(output_path, 'wb') as f:
+                                f.write(pdf_resp.content)
+                            if is_valid_pdf(output_path):
+                                print(f"    playwright_enhanced result: True")
+                                browser.close()
+                                return True
+                            else:
+                                os.remove(output_path)
+                    except Exception as e:
+                        print(f"      Download error: {str(e)[:50]}")
+                        continue
+
+                browser.close()
+
+            except Exception as e:
+                print(f"    playwright_enhanced page error: {str(e)[:80]}")
+                browser.close()
+                return False
+
+    except Exception as e:
+        print(f"    playwright_enhanced exception: {str(e)[:80]}")
+
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    print(f"    playwright_enhanced result: False")
+    return False
+
+
 def download_via_playwright_doi_page(doi: str, output_path: str) -> bool:
     """
     使用 Playwright 访问 DOI 页面，查找 PDF 下载链接和补充文件。
@@ -503,10 +634,26 @@ def download_via_playwright_doi_page(doi: str, output_path: str) -> bool:
             )
 
             context = browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                device_scale_factor=1,
+                is_mobile=False,
+                has_touch=False,
             )
 
+            # 添加初始化脚本隐藏自动化标记
             page = context.new_page()
+            page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                });
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [
+                        { name: 'Chrome PDF Plugin' },
+                        { name: 'Chrome PDF Viewer' },
+                    ],
+                });
+            """)
 
             try:
                 # 访问 DOI 页面，等待内容加载
@@ -1008,9 +1155,22 @@ def download_via_playwright_stealth(doi: str, output_path: str) -> bool:
                 ]
             )
 
-            context = browser.new_context()
-            context.set_extra_http_headers(HEADERS)
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                device_scale_factor=1,
+                is_mobile=False,
+                has_touch=False,
+            )
+
+            # 隐藏自动化检测标记
             page = context.new_page()
+            page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                });
+            """)
+            context.set_extra_http_headers(HEADERS)
 
             # Try Sci-Hub domains
             scihub_urls = [
