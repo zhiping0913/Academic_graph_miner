@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.env
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# Data files (exclude from repo)
+*.db
+*.sqlite
+*.sqlite3
+academic_knowledge_graph.db
+downloaded_papers/
+papers/
+
+# Temp files
+*.tmp
+.DS_Store
+*.log
+.claude/
+
+# OS
+Thumbs.db
+.AppleDouble
+.LSOverride

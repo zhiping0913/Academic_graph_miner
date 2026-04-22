@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Academic Graph Explorer</title>
+  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1a1a1a;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Controls bar ── */
+    #controls {
+      background: #222;
+      border-bottom: 1px solid #333;
+      padding: 10px 16px;
+      display: flex;
+      align-items: flex-end;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+
+    .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+    .ctrl-group label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    textarea {
+      background: #2e2e2e;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      border-radius: 5px;
+      padding: 6px 8px;
+      font-size: 12px;
+      font-family: monospace;
+      width: 320px;
+      height: 56px;
+      resize: vertical;
+      outline: none;
+      transition: border-color .2s;
+    }
+    textarea:focus { border-color: #00ccff; }
+
+    input[type=number] {
+      background: #2e2e2e;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      border-radius: 5px;
+      padding: 6px 8px;
+      width: 72px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color .2s;
+    }
+    input[type=number]:focus { border-color: #00ccff; }
+
+    #btn-build {
+      background: #ff3300;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      padding: 8px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+      white-space: nowrap;
+    }
+    #btn-build:hover { background: #cc2200; }
+    #btn-build:disabled { background: #555; cursor: default; }
+
+    #status { font-size: 12px; color: #888; min-width: 120px; }
+    #status.error { color: #ff6655; }
+
+    .legend {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      font-size: 12px;
+      color: #777;
+      margin-left: auto;
+    }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── Main area ── */
+    #main {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #network {
+      width: 100%;
+      height: 100%;
+      background: #1a1a1a;
+    }
+
+    /* ── Info panel ── */
+    #info-panel {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 300px;
+      max-height: calc(100% - 24px);
+      background: #222e;
+      backdrop-filter: blur(6px);
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 14px;
+      overflow-y: auto;
+      display: none;
+      font-size: 13px;
+    }
+
+    #info-panel h3 {
+      font-size: 13px;
+      line-height: 1.4;
+      margin-bottom: 4px;
+      color: #fff;
+    }
+
+    .meta-row { color: #888; font-size: 11px; margin-bottom: 2px; }
+    .doi-text { font-family: monospace; font-size: 10px; color: #666; word-break: break-all; margin-bottom: 10px; }
+
+    .seed-badge {
+      display: inline-block;
+      background: #ff3300;
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 3px;
+      margin-bottom: 8px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 10px 0 6px;
+      border-top: 1px solid #333;
+      padding-top: 8px;
+    }
+
+    .jaccard-row { margin-bottom: 8px; }
+    .jaccard-doi { font-family: monospace; font-size: 10px; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px; }
+    .jaccard-bar-wrap { display: flex; align-items: center; gap: 6px; }
+    .jaccard-bar-bg { flex: 1; height: 5px; background: #333; border-radius: 3px; overflow: hidden; }
+    .jaccard-bar-fill { height: 100%; background: #00ccff; border-radius: 3px; transition: width .3s; }
+    .jaccard-val { font-size: 12px; color: #00ccff; font-weight: 600; min-width: 44px; text-align: right; }
+
+    #close-btn {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      background: none;
+      border: none;
+      color: #666;
+      font-size: 16px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    #close-btn:hover { color: #ccc; }
+
+    /* ── Empty state ── */
+    #empty-hint {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      pointer-events: none;
+      font-size: 14px;
+      gap: 6px;
+    }
+    #empty-hint .big { font-size: 36px; }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <div class="ctrl-group">
+    <label>目标论文 DOI（每行一个）</label>
+    <textarea id="dois" placeholder="10.1088/1367-2630/15/1/015025&#10;10.1002/lpor.202401986"></textarea>
+  </div>
+  <div class="ctrl-group">
+    <label>向前层数</label>
+    <input type="number" id="max_forward_dist" value="1" min="0" max="5">
+  </div>
+  <div class="ctrl-group">
+    <label>向后层数</label>
+    <input type="number" id="max_backward_dist" value="1" min="0" max="5">
+  </div>
+  <div class="ctrl-group" style="gap:6px">
+    <button id="btn-build" onclick="loadGraph()">构建图谱</button>
+    <button id="btn-save" onclick="saveGraph()" disabled style="background:#00ccff;color:#000;font-weight:600">保存图谱</button>
+    <div id="status"></div>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><div class="dot" style="background:#ff3300"></div>种子论文</div>
+    <div class="legend-item"><div class="dot" style="background:#00ccff"></div>相关论文</div>
+  </div>
+</div>
+
+<div id="main">
+  <div id="network"></div>
+  <div id="empty-hint">
+    <div class="big">◎</div>
+    <div>输入 DOI 并点击「构建图谱」</div>
+  </div>
+  <div id="info-panel">
+    <button id="close-btn" onclick="closePanel()">✕</button>
+    <div id="info-content"></div>
+  </div>
+</div>
+
+<script>
+  var network = null;
+  var currentGraphData = null;
+
+  async function loadGraph() {
+    const raw = document.getElementById('dois').value.trim();
+    const seed_dois = raw.split('\n').map(s => s.trim()).filter(Boolean);
+    const max_forward_dist = Math.min(Math.max(parseInt(document.getElementById('max_forward_dist').value) || 0, 0), 5);
+    const max_backward_dist = Math.min(Math.max(parseInt(document.getElementById('max_backward_dist').value) || 0, 0), 5);
+
+    if (!seed_dois.length) {
+      setStatus('请至少输入一个 DOI', true);
+      return;
+    }
+
+    const btn = document.getElementById('btn-build');
+    btn.disabled = true;
+    setStatus('请求中…');
+    closePanel();
+
+    try {
+      const res = await fetch('/api/graph', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seed_dois, max_forward_dist, max_backward_dist })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      document.getElementById('empty-hint').style.display = 'none';
+      renderGraph(data);
+      setStatus(`${data.nodes.length} 个节点 · ${data.edges.length} 条边`);
+    } catch (e) {
+      setStatus('错误: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function setStatus(msg, isError) {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = isError ? 'error' : '';
+  }
+
+  function addToSeedDois(doi) {
+    const textarea = document.getElementById('dois');
+    const current = textarea.value.trim();
+    const dois = current ? current.split('\n').map(s => s.trim()) : [];
+    if (!dois.includes(doi)) {
+      dois.push(doi);
+      textarea.value = dois.join('\n');
+    }
+  }
+
+  async function saveGraph() {
+    if (!currentGraphData) {
+      setStatus('没有图谱数据可保存', true);
+      return;
+    }
+
+    const btn = document.getElementById('btn-save');
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '保存中…';
+
+    try {
+      const res = await fetch('/api/save-graph', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nodes: currentGraphData.nodes,
+          edges: currentGraphData.edges
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      setStatus(`图谱已保存: ${data.filename}`);
+      btn.textContent = originalText;
+    } catch (e) {
+      setStatus('保存失败: ' + e.message, true);
+      btn.textContent = originalText;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderGraph(data) {
+    const nodeIndex = {};
+    data.nodes.forEach(n => { nodeIndex[n.id] = n; });
+
+    const visNodes = data.nodes.map(n => {
+      const isSeed = n.is_seed;
+      const color = isSeed ? '#ff3300' : '#00ccff';
+      const size = Math.min(10 + (n.in_degree || 0) * 5, 60);
+      return {
+        id: n.id,
+        label: truncate(n.title || n.id, 28),
+        size,
+        color: { background: color, border: color, highlight: { background: color, border: '#ffffff' } },
+        font: { color: 'white', size: 11, face: 'Segoe UI, system-ui, sans-serif' },
+        title: buildTooltip(n),
+      };
+    });
+
+    const visEdges = data.edges.map(e => ({
+      from: e.from,
+      to: e.to,
+      value: Math.max(0.5, (e.weight || 0) * 10),
+      color: { color: '#555555', highlight: '#999999', opacity: 0.7 },
+      arrows: { to: { enabled: true, scaleFactor: 0.4 } },
+    }));
+
+    const options = {
+      nodes: { shape: 'dot', scaling: { min: 8, max: 60 }, borderWidth: 1.5 },
+      edges: {
+        smooth: { type: 'dynamic' },
+        scaling: { min: 1, max: 10 },
+        selectionWidth: 2,
+      },
+      physics: {
+        stabilization: { iterations: 200, updateInterval: 25 },
+        barnesHut: { gravitationalConstant: -8000, springLength: 130, springConstant: 0.04, damping: 0.09 },
+      },
+      interaction: { hover: true, tooltipDelay: 150, navigationButtons: false, keyboard: true },
+      layout: { improvedLayout: true },
+    };
+
+    if (network) network.destroy();
+    network = new vis.Network(
+      document.getElementById('network'),
+      { nodes: new vis.DataSet(visNodes), edges: new vis.DataSet(visEdges) },
+      options
+    );
+
+    network.on('click', params => {
+      if (params.nodes.length > 0) {
+        showPanel(nodeIndex[params.nodes[0]], data.seed_dois);
+      } else {
+        closePanel();
+      }
+    });
+
+    // Save graph data and enable save button
+    currentGraphData = data;
+    document.getElementById('btn-save').disabled = false;
+  }
+
+  function buildTooltip(n) {
+    let html = `<div style="background:#252525;padding:8px 10px;border-radius:5px;max-width:260px;font-size:12px;color:#e0e0e0;line-height:1.5">`;
+    html += `<b>${esc(truncate(n.title || n.id, 80))}</b>`;
+    if (n.year) html += `<br><span style="color:#888">${n.year}</span>`;
+    if (n.journal) html += ` · <span style="color:#888">${esc(n.journal)}</span>`;
+    html += `</div>`;
+    return html;
+  }
+
+  function showPanel(node, seed_dois) {
+    const panel = document.getElementById('info-panel');
+    const content = document.getElementById('info-content');
+
+    let html = '';
+    if (node.is_seed) html += '<div class="seed-badge">种子论文</div>';
+    html += `<h3>${esc(node.title || node.id)}</h3>`;
+    if (!node.is_seed) {
+      html += `<button class="add-to-seeds" data-doi="${esc(node.id)}" style="background:#00ccff;color:#000;border:none;border-radius:4px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:10px;width:100%;transition:background .15s">加入目标论文</button>`;
+    }
+    if (node.year || node.journal) {
+      html += `<div class="meta-row">`;
+      if (node.year) html += node.year;
+      if (node.year && node.journal) html += ' · ';
+      if (node.journal) html += esc(node.journal);
+      html += `</div>`;
+    }
+    if (node.authors && node.authors.length) {
+      const authStr = node.authors.slice(0, 4).join(', ') + (node.authors.length > 4 ? ' 等' : '');
+      html += `<div class="meta-row">${esc(authStr)}</div>`;
+    }
+    html += `<div class="doi-text">${esc(node.id)}</div>`;
+
+    if (node.jaccard && node.jaccard.length > 0) {
+      html += `<div class="section-label">Jaccard 相似度（与各种子论文）</div>`;
+      node.jaccard.forEach(item => {
+        const pct = Math.round(item.jaccard * 100);
+        html += `<div class="jaccard-row">`;
+        html += `<div class="jaccard-doi" title="${esc(item.doi)}">${esc(item.doi)}</div>`;
+        html += `<div class="jaccard-bar-wrap">`;
+        html += `<div class="jaccard-bar-bg"><div class="jaccard-bar-fill" style="width:${pct}%"></div></div>`;
+        html += `<span class="jaccard-val">${item.jaccard.toFixed(4)}</span>`;
+        html += `</div></div>`;
+      });
+    }
+
+    content.innerHTML = html;
+    const btn = content.querySelector('.add-to-seeds');
+    if (btn) {
+      btn.addEventListener('click', e => addToSeedDois(btn.dataset.doi));
+    }
+    panel.style.display = 'block';
+  }
+
+  function closePanel() {
+    document.getElementById('info-panel').style.display = 'none';
+  }
+
+  function truncate(str, n) {
+    if (!str) return '';
+    return str.length > n ? str.slice(0, n) + '…' : str;
+  }
+
+  function esc(str) {
+    if (str == null) return '';
+    return String(str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // Allow Ctrl+Enter to submit
+  document.getElementById('dois').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) loadGraph();
+  });
+</script>
+</body>
+</html>

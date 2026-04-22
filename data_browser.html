@@ -1,0 +1,1388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>学术论文数据库浏览器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 0.95em;
+        }
+
+        .controls {
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .controls-left {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .search-box {
+            position: relative;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 0.95em;
+            transition: border-color 0.3s;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 5px rgba(102, 126, 234, 0.2);
+        }
+
+        .year-filter {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .year-filter label {
+            font-weight: 500;
+            color: #333;
+        }
+
+        .year-filter input {
+            width: 100px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+
+        .stats {
+            background: #f5f5f5;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+            color: #666;
+            white-space: nowrap;
+        }
+
+        .export-section {
+            background: #f9f9f9;
+            padding: 15px 20px;
+            border-radius: 5px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .export-section select {
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+
+        .export-section select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .export-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 5px;
+            font-size: 0.95em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .export-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .export-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .papers-container {
+            padding: 20px;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+
+        .paper-item {
+            display: flex;
+            gap: 15px;
+            align-items: flex-start;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: #f5f5f5;
+            border-left: 4px solid #667eea;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+
+        .paper-item:hover {
+            background: #efefef;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .paper-item.selected {
+            background: #e8eaf6;
+            border-left-color: #764ba2;
+        }
+
+        .paper-checkbox {
+            flex-shrink: 0;
+            width: 20px;
+            height: 20px;
+            margin-top: 2px;
+            cursor: pointer;
+        }
+
+        .paper-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .paper-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+            word-break: break-word;
+        }
+
+        .paper-doi {
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            color: #667eea;
+            margin-bottom: 5px;
+            word-break: break-all;
+        }
+
+        .paper-meta {
+            display: flex;
+            gap: 20px;
+            font-size: 0.85em;
+            color: #666;
+            flex-wrap: wrap;
+        }
+
+        .meta-item {
+            display: flex;
+            gap: 5px;
+        }
+
+        .meta-label {
+            font-weight: 500;
+            color: #999;
+        }
+
+        .toolbar {
+            background: #f5f5f5;
+            padding: 15px 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .toolbar button {
+            padding: 8px 15px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+
+        .toolbar button:hover {
+            background: #f0f0f0;
+            border-color: #667eea;
+        }
+
+        .toolbar button.primary {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .toolbar button.primary:hover {
+            background: #764ba2;
+            border-color: #764ba2;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            margin-left: 10px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #333;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 5px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.3s ease-out;
+            max-width: 400px;
+            z-index: 1000;
+        }
+
+        .toast.success {
+            background: #4caf50;
+        }
+
+        .toast.error {
+            background: #f44336;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .select-all-section {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            padding: 15px 20px;
+            background: #f9f9f9;
+            border-bottom: 1px solid #eee;
+        }
+
+        .select-all-section label {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            cursor: pointer;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .select-all-section input {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .similarity-filter {
+            background: #f9f9f9;
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .filter-group label {
+            font-weight: 500;
+            color: #333;
+            min-width: 100px;
+        }
+
+        .ref-paper-search {
+            position: relative;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .ref-paper-search input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+
+        .ref-paper-search input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 5px rgba(102, 126, 234, 0.2);
+        }
+
+        .ref-paper-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-top: none;
+            border-radius: 0 0 5px 5px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+            z-index: 100;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .ref-paper-suggestions.show {
+            display: block;
+        }
+
+        .ref-paper-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            font-size: 0.9em;
+            color: #333;
+            transition: background 0.2s;
+        }
+
+        .ref-paper-item:hover {
+            background: #f5f5f5;
+        }
+
+        .ref-paper-item:last-child {
+            border-bottom: none;
+        }
+
+        .similarity-slider {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .similarity-slider input {
+            width: 150px;
+        }
+
+        .similarity-slider .value {
+            min-width: 40px;
+            font-weight: 500;
+            color: #667eea;
+        }
+
+        .sort-filter {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .sort-filter select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 0.9em;
+            cursor: pointer;
+        }
+
+        .sort-filter select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .similarity-badge {
+            display: inline-block;
+            background: #e8eaf6;
+            color: #667eea;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .filter-reset {
+            padding: 8px 15px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+
+        .filter-reset:hover {
+            background: #f5f5f5;
+            border-color: #667eea;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            animation: fadeIn 0.3s;
+        }
+
+        .modal.show {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            max-width: 800px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            animation: slideUp 0.3s ease-out;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 15px;
+        }
+
+        .modal-header h2 {
+            color: #333;
+            font-size: 1.5em;
+            margin: 0;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5em;
+            color: #999;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-close:hover {
+            color: #333;
+        }
+
+        .citing-papers-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .citing-paper {
+            padding: 15px;
+            margin-bottom: 10px;
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            border-radius: 5px;
+            transition: all 0.2s;
+        }
+
+        .citing-paper:hover {
+            background: #f0f0f0;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .citing-paper-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .citing-paper-doi {
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            color: #667eea;
+            margin-bottom: 5px;
+            word-break: break-all;
+        }
+
+        .citing-paper-meta {
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .cite-btn {
+            background: #e3f2fd;
+            color: #667eea;
+            border: 1px solid #667eea;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .cite-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .modal-loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .modal-loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            margin-left: 10px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .modal-empty {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .modal-stats {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            .controls-left {
+                width: 100%;
+            }
+
+            .paper-item {
+                flex-direction: column;
+            }
+
+            .export-section {
+                width: 100%;
+                flex-direction: column;
+            }
+
+            .similarity-filter {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .filter-group {
+                width: 100%;
+                flex-direction: column;
+                gap: 5px;
+            }
+
+            .filter-group label {
+                min-width: auto;
+            }
+
+            .header h1 {
+                font-size: 1.5em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📚 学术论文数据库浏览器</h1>
+            <p>浏览、搜索和导出您的论文数据库</p>
+        </div>
+
+        <div class="controls">
+            <div class="controls-left">
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="搜索论文标题或 DOI...">
+                </div>
+                <div class="year-filter">
+                    <label for="yearMin">年份:</label>
+                    <input type="number" id="yearMin" placeholder="最早年份" min="1900" max="2100">
+                    <span>—</span>
+                    <input type="number" id="yearMax" placeholder="最晚年份" min="1900" max="2100">
+                </div>
+            </div>
+            <div class="stats">
+                <span id="totalCount">总计: 0</span> |
+                <span id="selectedCount">已选: 0</span>
+            </div>
+        </div>
+
+        <div class="select-all-section">
+            <label>
+                <input type="checkbox" id="selectAllCheckbox">
+                <span>全选当前搜索结果</span>
+            </label>
+        </div>
+
+        <div class="similarity-filter">
+            <div class="filter-group">
+                <label>参考论文:</label>
+                <div class="ref-paper-search">
+                    <input type="text" id="refPaperSearch" placeholder="搜索参考论文 (DOI 或标题)...">
+                    <div class="ref-paper-suggestions" id="refPaperSuggestions"></div>
+                </div>
+                <span id="refPaperSelected"></span>
+                <button class="filter-reset" id="clearRefPaper" style="display: none;">清空</button>
+            </div>
+
+            <div class="filter-group">
+                <label>快速获取:</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="quickFetchDoi" placeholder="输入 DOI..." style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 5px; flex: 1; min-width: 150px;">
+                    <button class="filter-reset" id="fetchDOIBtn" style="background: #667eea; color: white; border-color: #667eea;">📥 获取</button>
+                </div>
+                <span id="fetchStatus"></span>
+            </div>
+
+            <div class="filter-group">
+                <label>相似度阈值:</label>
+                <div class="similarity-slider">
+                    <input type="range" id="similarityThreshold" min="0" max="1" step="0.01" value="0">
+                    <span class="value" id="similarityValue">0.00</span>
+                </div>
+            </div>
+
+            <div class="filter-group">
+                <label>排序:</label>
+                <div class="sort-filter">
+                    <select id="sortBy">
+                        <option value="">默认排序</option>
+                        <option value="similarity_desc">相似度 ↓</option>
+                        <option value="similarity_asc">相似度 ↑</option>
+                        <option value="year_desc">年份 ↓</option>
+                        <option value="year_asc">年份 ↑</option>
+                        <option value="title_asc">标题 A-Z</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="export-section">
+            <label for="exportFormat">导出格式:</label>
+            <select id="exportFormat">
+                <option value="txt-doi">📋 DOI 列表 (TXT)</option>
+                <option value="json">📋 JSON 格式</option>
+                <option value="csv">📊 CSV 表格</option>
+                <option value="txt-detail">📝 详细信息 (TXT)</option>
+            </select>
+            <button class="export-btn" id="exportBtn" disabled>
+                📥 导出
+            </button>
+            <span id="exportStatus"></span>
+        </div>
+
+        <div class="papers-container" id="papersContainer">
+            <div class="loading">加载中...</div>
+        </div>
+
+        <div class="toolbar">
+            <button class="primary" id="selectVisibleBtn">✓ 选择可见项</button>
+            <button id="unselectAllBtn">✗ 取消全选</button>
+            <button id="refreshBtn">🔄 刷新</button>
+        </div>
+
+        <!-- 引用论文模态框 -->
+        <div class="modal" id="citingPapersModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>📖 引用此论文的文章</h2>
+                    <button class="modal-close" id="modalClose">✕</button>
+                </div>
+                <div id="modalBody">
+                    <div class="modal-loading">加载中...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allPapers = [];
+        let filteredPapers = [];
+        let selectedDOIs = new Set();
+        let currentPage = 1;
+        let totalPages = 1;
+        let totalPapers = 0;
+        let isLoading = false;
+        let perPage = 50;
+        let refDoi = null;
+        let similarityThreshold = 0;
+        let sortBy = '';
+
+        const papersContainer = document.getElementById('papersContainer');
+        const searchInput = document.getElementById('searchInput');
+        const yearMin = document.getElementById('yearMin');
+        const yearMax = document.getElementById('yearMax');
+        const totalCountEl = document.getElementById('totalCount');
+        const selectedCountEl = document.getElementById('selectedCount');
+        const exportBtn = document.getElementById('exportBtn');
+        const exportFormat = document.getElementById('exportFormat');
+        const exportStatus = document.getElementById('exportStatus');
+        const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+        const selectVisibleBtn = document.getElementById('selectVisibleBtn');
+        const unselectAllBtn = document.getElementById('unselectAllBtn');
+        const refreshBtn = document.getElementById('refreshBtn');
+
+        // 相似度过滤元素
+        const refPaperSearch = document.getElementById('refPaperSearch');
+        const refPaperSuggestions = document.getElementById('refPaperSuggestions');
+        const refPaperSelected = document.getElementById('refPaperSelected');
+        const clearRefPaper = document.getElementById('clearRefPaper');
+        const similarityThresholdSlider = document.getElementById('similarityThreshold');
+        const similarityValue = document.getElementById('similarityValue');
+        const sortBySelect = document.getElementById('sortBy');
+
+        // 快速获取元素
+        const quickFetchDoi = document.getElementById('quickFetchDoi');
+        const fetchDOIBtn = document.getElementById('fetchDOIBtn');
+        const fetchStatus = document.getElementById('fetchStatus');
+
+        // 模态框元素
+        const citingPapersModal = document.getElementById('citingPapersModal');
+        const modalClose = document.getElementById('modalClose');
+        const modalBody = document.getElementById('modalBody');
+
+        // 搜索参考论文
+        let searchTimeout;
+        refPaperSearch.addEventListener('input', async (e) => {
+            clearTimeout(searchTimeout);
+            const query = e.target.value.trim();
+
+            if (query.length < 2) {
+                refPaperSuggestions.classList.remove('show');
+                return;
+            }
+
+            searchTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: query });
+                    const response = await fetch(`/api/search-papers?${params}`);
+                    const data = await response.json();
+
+                    if (data.status === 'success') {
+                        const suggestions = data.papers || [];
+                        refPaperSuggestions.innerHTML = suggestions
+                            .map(p => `
+                                <div class="ref-paper-item" data-doi="${p.doi}" data-title="${p.title}">
+                                    <strong>${p.title}</strong><br>
+                                    <span style="color: #999; font-size: 0.85em;">${p.doi}</span>
+                                </div>
+                            `)
+                            .join('');
+
+                        if (suggestions.length > 0) {
+                            refPaperSuggestions.classList.add('show');
+                        } else {
+                            refPaperSuggestions.classList.remove('show');
+                        }
+                    }
+                } catch (error) {
+                    console.error('搜索失败:', error);
+                }
+            }, 300);
+        });
+
+        // 选择参考论文
+        refPaperSuggestions.addEventListener('click', (e) => {
+            const item = e.target.closest('.ref-paper-item');
+            if (item) {
+                refDoi = item.dataset.doi;
+                const title = item.dataset.title;
+                refPaperSearch.value = '';
+                refPaperSelected.textContent = `📌 已选: ${title.substring(0, 50)}...`;
+                clearRefPaper.style.display = 'inline-block';
+                refPaperSuggestions.classList.remove('show');
+                currentPage = 1;
+                filterPapers();
+            }
+        });
+
+        // 清空参考论文
+        clearRefPaper.addEventListener('click', () => {
+            refDoi = null;
+            refPaperSearch.value = '';
+            refPaperSelected.textContent = '';
+            clearRefPaper.style.display = 'none';
+            similarityThresholdSlider.value = 0;
+            similarityValue.textContent = '0.00';
+                currentPage = 1;
+            filterPapers();
+        });
+
+        // 相似度阈值滑块
+        similarityThresholdSlider.addEventListener('input', (e) => {
+            similarityThreshold = parseFloat(e.target.value);
+            similarityValue.textContent = similarityThreshold.toFixed(2);
+            currentPage = 1;
+            filterPapers();
+        });
+
+        // 排序选择
+        sortBySelect.addEventListener('change', () => {
+            sortBy = sortBySelect.value;
+            currentPage = 1;
+            filterPapers();
+        });
+
+        // 点击外部关闭建议
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.ref-paper-search')) {
+                refPaperSuggestions.classList.remove('show');
+            }
+        });
+
+        // 模态框关闭
+        modalClose.addEventListener('click', () => {
+            citingPapersModal.classList.remove('show');
+        });
+
+        citingPapersModal.addEventListener('click', (e) => {
+            if (e.target === citingPapersModal) {
+                citingPapersModal.classList.remove('show');
+            }
+        });
+
+        // 快速获取 DOI
+        fetchDOIBtn.addEventListener('click', async () => {
+            const doi = quickFetchDoi.value.trim().toLowerCase();
+            if (!doi) {
+                showToast('请输入 DOI', 'error');
+                return;
+            }
+
+            try {
+                fetchDOIBtn.disabled = true;
+                fetchStatus.textContent = '获取中...';
+
+                const response = await fetch('/api/fetch-paper', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ doi: doi })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    showToast(`✅ 成功获取论文: ${doi}`, 'success');
+                    fetchStatus.textContent = '';
+                    quickFetchDoi.value = '';
+
+                    // 刷新列表并显示该论文
+                    currentPage = 1;
+                    refDoi = doi;
+                    refPaperSearch.value = '';
+                    refPaperSelected.textContent = `📌 已选: ${data.paper?.metadata?.title?.substring(0, 30) || doi}...`;
+                    clearRefPaper.style.display = 'inline-block';
+                    similarityThresholdSlider.value = 0;
+                    similarityValue.textContent = '0.00';
+                    filterPapers();
+                } else {
+                    showToast(`❌ ${data.message}`, 'error');
+                    fetchStatus.textContent = '';
+                }
+            } catch (error) {
+                showToast(`获取失败: ${error.message}`, 'error');
+                fetchStatus.textContent = '';
+            } finally {
+                fetchDOIBtn.disabled = false;
+            }
+        });
+
+        // Enter 键快速获取
+        quickFetchDoi.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                fetchDOIBtn.click();
+            }
+        });
+
+        // 查询引用论文
+        async function showCitingPapers(doi) {
+            citingPapersModal.classList.add('show');
+            modalBody.innerHTML = '<div class="modal-loading">加载中...</div>';
+
+            try {
+                const response = await fetch(`/api/citing-papers?doi=${encodeURIComponent(doi)}`);
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    const papers = data.papers || [];
+                    if (papers.length === 0) {
+                        modalBody.innerHTML = '<div class="modal-empty">📭 没有找到引用此论文的文章</div>';
+                        return;
+                    }
+
+                    let html = `
+                        <div class="modal-stats">
+                            📊 共有 <strong>${papers.length}</strong> 篇文章引用了此论文
+                        </div>
+                        <ul class="citing-papers-list">
+                    `;
+
+                    papers.forEach(paper => {
+                        html += `
+                            <li class="citing-paper">
+                                <div class="citing-paper-title">${paper.title}</div>
+                                <div class="citing-paper-doi">${paper.doi}</div>
+                                <div class="citing-paper-meta">
+                                    年份: ${paper.year || 'N/A'} | 期刊: ${paper.journal || 'N/A'}
+                                </div>
+                            </li>
+                        `;
+                    });
+
+                    html += '</ul>';
+                    modalBody.innerHTML = html;
+                } else {
+                    modalBody.innerHTML = `<div class="modal-empty">❌ ${data.message}</div>`;
+                }
+            } catch (error) {
+                modalBody.innerHTML = `<div class="modal-empty">❌ 加载失败: ${error.message}</div>`;
+            }
+        }
+
+        // 加载论文列表（带分页）
+        async function loadPapers(page = 1) {
+            try {
+                if (page === 1) {
+                    papersContainer.innerHTML = '<div class="loading">加载中...</div>';
+                }
+
+                const searchText = searchInput.value;
+                const minYear = yearMin.value;
+                const maxYear = yearMax.value;
+
+                const params = new URLSearchParams({
+                    page: page,
+                    per_page: perPage,
+                    ...(searchText && { search: searchText }),
+                    ...(minYear && { year_min: minYear }),
+                    ...(maxYear && { year_max: maxYear }),
+                    ...(refDoi && { ref_doi: refDoi }),
+                    ...(refDoi && similarityThreshold > 0 && { similarity_min: similarityThreshold }),
+                    ...(sortBy && { sort_by: sortBy })
+                });
+
+                isLoading = true;
+                const response = await fetch(`/api/papers?${params}`);
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    if (page === 1) {
+                        allPapers = data.papers;
+                    } else {
+                        allPapers.push(...data.papers);
+                    }
+
+                    totalPapers = data.total;
+                    totalPages = data.total_pages;
+                    currentPage = page;
+
+                    renderPapers(page === 1);
+                    updateStats();
+
+                    // 添加加载更多按钮
+                    if (currentPage < totalPages) {
+                        addLoadMoreButton();
+                    }
+                } else {
+                    showToast('加载失败: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showToast('加载失败: ' + error.message, 'error');
+                if (currentPage === 1) {
+                    papersContainer.innerHTML = '<div class="empty">❌ 加载失败</div>';
+                }
+            } finally {
+                isLoading = false;
+            }
+        }
+
+        // 添加"加载更多"按钮
+        function addLoadMoreButton() {
+            const loadMoreDiv = document.createElement('div');
+            loadMoreDiv.style.textAlign = 'center';
+            loadMoreDiv.style.padding = '20px';
+            loadMoreDiv.innerHTML = `
+                <button style="padding: 10px 20px; background: #667eea; color: white;
+                               border: none; border-radius: 5px; cursor: pointer; font-size: 0.95em;">
+                    📥 加载更多 (${currentPage}/${totalPages})
+                </button>
+                <p style="color: #999; margin-top: 10px; font-size: 0.9em;">
+                    已显示 ${allPapers.length} / ${totalPapers} 篇论文
+                </p>
+            `;
+
+            const btn = loadMoreDiv.querySelector('button');
+            btn.addEventListener('click', () => {
+                loadPapers(currentPage + 1);
+            });
+
+            papersContainer.appendChild(loadMoreDiv);
+        }
+
+        // 筛选论文
+        function filterPapers() {
+            currentPage = 1;
+            loadPapers(1);
+        }
+
+        // 渲染论文列表
+        function renderPapers(clear = true) {
+            if (clear || allPapers.length === 0) {
+                papersContainer.innerHTML = '';
+            }
+
+            if (allPapers.length === 0 && currentPage === 1) {
+                papersContainer.innerHTML = '<div class="empty">📭 未找到论文</div>';
+                return;
+            }
+
+            // 使用 DocumentFragment 批量添加 DOM
+            const fragment = document.createDocumentFragment();
+
+            allPapers.forEach(paper => {
+                const div = document.createElement('div');
+                div.className = `paper-item ${selectedDOIs.has(paper.doi) ? 'selected' : ''}`;
+
+                // 构建相似度标签
+                let similarityBadge = '';
+                if (paper.similarity !== undefined) {
+                    const similarity = (paper.similarity * 100).toFixed(1);
+                    similarityBadge = `<span class="similarity-badge">相似度: ${similarity}%</span>`;
+                }
+
+                div.innerHTML = `
+                    <input type="checkbox" class="paper-checkbox" data-doi="${paper.doi}"
+                           ${selectedDOIs.has(paper.doi) ? 'checked' : ''}>
+                    <div class="paper-info">
+                        <div class="paper-title">${paper.title}${similarityBadge}</div>
+                        <div class="paper-doi">${paper.doi}</div>
+                        <div class="paper-meta">
+                            <div class="meta-item">
+                                <span class="meta-label">年份:</span>
+                                <span>${paper.year || 'N/A'}</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">期刊:</span>
+                                <span>${paper.journal || 'N/A'}</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">作者:</span>
+                                <span>${paper.authors_count}</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">前向引用:</span>
+                                <span>${paper.forward_count}</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">后向引用:</span>
+                                <span>${paper.backward_count}</span>
+                            </div>
+                            <button class="cite-btn" data-doi="${paper.doi}" data-title="${paper.title}">
+                                📖 引用此论文 (${paper.backward_count})
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                const checkbox = div.querySelector('.paper-checkbox');
+                checkbox.addEventListener('change', handlePaperSelection);
+
+                const citeBtn = div.querySelector('.cite-btn');
+                citeBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    showCitingPapers(e.target.dataset.doi);
+                });
+
+                fragment.appendChild(div);
+            });
+
+            papersContainer.appendChild(fragment);
+        }
+
+        // 处理论文选择
+        function handlePaperSelection(e) {
+            const doi = e.target.dataset.doi;
+            const paperItem = e.target.closest('.paper-item');
+
+            if (e.target.checked) {
+                selectedDOIs.add(doi);
+                paperItem.classList.add('selected');
+            } else {
+                selectedDOIs.delete(doi);
+                paperItem.classList.remove('selected');
+            }
+
+            updateStats();
+            updateSelectAll();
+        }
+
+        // 更新统计
+        function updateStats() {
+            totalCountEl.textContent = `总计: ${totalPapers}`;
+            selectedCountEl.textContent = `已选: ${selectedDOIs.size}`;
+            exportBtn.disabled = selectedDOIs.size === 0;
+        }
+
+        // 更新全选复选框
+        function updateSelectAll() {
+            const visibleCount = allPapers.length;
+            const selectedCount = allPapers.filter(p => selectedDOIs.has(p.doi)).length;
+
+            if (visibleCount === 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            } else if (selectedCount === 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            } else if (selectedCount === visibleCount) {
+                selectAllCheckbox.checked = true;
+                selectAllCheckbox.indeterminate = false;
+            } else {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = true;
+            }
+        }
+
+        // 全选/取消全选
+        selectAllCheckbox.addEventListener('change', (e) => {
+            allPapers.forEach(paper => {
+                if (e.target.checked) {
+                    selectedDOIs.add(paper.doi);
+                } else {
+                    selectedDOIs.delete(paper.doi);
+                }
+            });
+            renderPapers();
+            updateStats();
+        });
+
+        // 选择可见项
+        selectVisibleBtn.addEventListener('click', () => {
+            allPapers.forEach(paper => {
+                selectedDOIs.add(paper.doi);
+            });
+            renderPapers();
+            updateStats();
+        });
+
+        // 取消全选
+        unselectAllBtn.addEventListener('click', () => {
+            selectedDOIs.clear();
+            renderPapers();
+            updateStats();
+        });
+
+        // 刷新
+        refreshBtn.addEventListener('click', () => {
+            allPapers = [];
+            selectedDOIs.clear();
+            currentPage = 1;
+            loadPapers(1);
+        });
+
+        // 导出
+        exportBtn.addEventListener('click', async () => {
+            if (selectedDOIs.size === 0) {
+                showToast('请先选择论文', 'error');
+                return;
+            }
+
+            try {
+                exportBtn.disabled = true;
+                exportStatus.textContent = '导出中...';
+
+                const response = await fetch('/api/export', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        dois: Array.from(selectedDOIs),
+                        format: exportFormat.value
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || '导出失败');
+                }
+
+                // 获取文件名
+                const contentDisposition = response.headers.get('content-disposition');
+                let filename = `export_${Date.now()}`;
+                if (contentDisposition) {
+                    const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
+                    if (filenameMatch) filename = filenameMatch[1];
+                }
+
+                // 下载文件
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+
+                showToast(`✅ 已导出 ${selectedDOIs.size} 篇论文`, 'success');
+                exportStatus.textContent = '';
+            } catch (error) {
+                showToast('导出失败: ' + error.message, 'error');
+                exportStatus.textContent = '';
+            } finally {
+                exportBtn.disabled = selectedDOIs.size === 0;
+            }
+        });
+
+        // 搜索和筛选
+        searchInput.addEventListener('input', () => {
+            currentPage = 1;
+            filterPapers();
+        });
+
+        yearMin.addEventListener('change', filterPapers);
+        yearMax.addEventListener('change', filterPapers);
+
+        // 无限滚动检测
+        papersContainer.addEventListener('scroll', () => {
+            if (isLoading || currentPage >= totalPages) return;
+
+            const { scrollTop, scrollHeight, clientHeight } = papersContainer;
+            if (scrollTop + clientHeight >= scrollHeight - 200) {
+                loadPapers(currentPage + 1);
+            }
+        });
+
+        // 显示提示
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.animation = 'slideIn 0.3s ease-out reverse';
+                setTimeout(() => document.body.removeChild(toast), 300);
+            }, 3000);
+        }
+
+        // 初始化
+        loadPapers(1);
+    </script>
+</body>
+</html>

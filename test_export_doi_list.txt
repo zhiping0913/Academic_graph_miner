@@ -1,0 +1,7 @@
+# DOI List Export
+# Generated: 2026-04-21 17:35:24
+# Total DOIs: 3
+
+10.1038/nphys2439
+# 10.1103/PhysRevLett.92.185001  (not found)
+# 10.1103/PhysRevE.101.033202  (not found)
