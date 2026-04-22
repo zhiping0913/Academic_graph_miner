@@ -86,7 +86,7 @@ print(df[['DOI', 'Title', 'PDF_Path', 'Markdown_Path', 'Download_Status']])
 
 **Download Priority** (tries in order):
 ```
-1. Playwright DOI page     ← Most reliable for bypassing anti-bot
+1. Playwright DOI page     ← Handles JS/iframes, Anti-bot bypass
 2. doi2pdf                 ← Fast direct conversion
 3. OpenAlex API            ← Open access links
 4. Crossref links          ← Publisher metadata
@@ -94,8 +94,30 @@ print(df[['DOI', 'Title', 'PDF_Path', 'Markdown_Path', 'Download_Status']])
 6. arXiv                   ← Preprints
 7. Scidownl                ← Sci-Hub wrapper
 8. Sci-Hub direct          ← Direct mirror (unreliable)
-9. Playwright stealth      ← Fallback browser automation
+9. Playwright stealth      ← Fallback browser automation with stealth
 ```
+
+**⚠️ Playwright Capabilities & Limitations**:
+- ✅ Handles JavaScript-heavy pages (React, Vue, Svelte, etc.)
+- ✅ Processes iframes and dynamic content loading
+- ✅ Bypasses simple anti-bot (user-agent, headers, delays)
+- ✅ Clicks interactive elements ("View PDF", download buttons)
+- ❌ Cannot bypass institutional/paywall authentication (login required)
+- ❌ Cannot access IP-restricted content
+- ❌ Cannot handle Cloudflare verification that requires user interaction
+
+**Common failure scenarios**:
+1. **Paywall-only papers**: No open access mirror → Requires institutional login
+2. **Gated supplements**: Supplementary files behind paywall
+3. **Time-limited access**: PDF link expired or preview period ended
+4. **Geographic restrictions**: Content blocked outside institution network
+
+**Alternative solutions for inaccessible papers**:
+- Request via institutional VPN or network
+- Check author's ResearchGate, website, or GitHub
+- Request directly from authors (most respond within days)
+- Look for earlier pre-prints or conference proceedings
+- Check arXiv or bioRxiv for preprints
 
 **Behavior**:
 - Returns immediately on first successful download

@@ -513,7 +513,22 @@ def download_via_playwright_doi_page(doi: str, output_path: str) -> bool:
                 page.goto(url, wait_until='networkidle', timeout=30000)
 
                 # 等待任何动态内容加载
-                page.wait_for_timeout(2000)
+                page.wait_for_timeout(3000)
+
+                # 处理 iframe（许多出版商在 iframe 中加载内容）
+                print(f"      Checking for iframes...")
+                iframes = page.query_selector_all('iframe')
+                print(f"      Found {len(iframes)} iframe(s)")
+
+                # 等待 iframe 内容加载
+                for i, iframe in enumerate(iframes):
+                    try:
+                        frame = iframe.content_frame()
+                        if frame:
+                            print(f"      Waiting for iframe {i} to load...")
+                            frame.wait_for_load_state('networkidle')
+                    except Exception as e:
+                        print(f"      iframe {i} error: {str(e)[:40]}")
 
                 # 获取页面 HTML
                 content = page.content()
@@ -530,6 +545,8 @@ def download_via_playwright_doi_page(doi: str, output_path: str) -> bool:
                     'button[aria-label*="PDF"]',
                     '[class*="pdf-link"]',
                     '[class*="download-pdf"]',
+                    'a[aria-label*="PDF"]',
+                    '[role="button"][aria-label*="PDF"]',
                 ]
 
                 for selector in pdf_selectors:
@@ -548,7 +565,7 @@ def download_via_playwright_doi_page(doi: str, output_path: str) -> bool:
                             elif data_url:
                                 pdf_links.append(data_url)
 
-                            print(f"      Found PDF link: {href or data_label or aria_label}")
+                            print(f"      Found PDF link: {href or data_url or aria_label}")
                     except Exception as e:
                         print(f"      Selector error {selector}: {str(e)[:50]}")
                         continue
@@ -573,7 +590,45 @@ def download_via_playwright_doi_page(doi: str, output_path: str) -> bool:
                         print(f"      Download failed: {str(e)[:50]}")
                         continue
 
-                # 3. 如果没有找到 PDF 链接，尝试访问页面上的常见 PDF 按钮
+                # 3. 智能处理交互式元素（点击验证、加载指示器等）
+                print(f"      Checking for interactive elements (verify, challenge, etc)...")
+                try:
+                    # 查找并处理可能的验证或"查看PDF"按钮
+                    interactive_selectors = [
+                        'button:has-text("Verify")',
+                        'button:has-text("verify")',
+                        'button:has-text("I\'m not a robot")',
+                        'button:has-text("Continue")',
+                        'button:has-text("View PDF")',
+                        'button:has-text("Download PDF")',
+                        'button:has-text("Get PDF")',
+                        'a:has-text("Download PDF")',
+                        '[class*="verify"]',
+                        '[class*="download-btn"]',
+                        '[aria-label*="Download"]',
+                        '[aria-label*="View PDF"]',
+                    ]
+
+                    for selector in interactive_selectors:
+                        try:
+                            elem = page.query_selector(selector)
+                            if elem and elem.is_visible():
+                                print(f"      Found interactive element: {selector}")
+                                # 确保元素在视口内
+                                elem.scroll_into_view_if_needed()
+                                page.wait_for_timeout(500)
+                                # 点击元素
+                                elem.click()
+                                print(f"      Clicked: {selector}")
+                                # 等待新内容加载
+                                page.wait_for_timeout(3000)
+                                break
+                        except Exception:
+                            continue
+                except Exception as e:
+                    print(f"      Interactive element handling error: {str(e)[:50]}")
+
+                # 4. 如果没有找到 PDF 链接，尝试访问页面上的常见 PDF 按钮
                 try:
                     # 尝试点击下载按钮
                     download_button_selectors = [
@@ -581,15 +636,16 @@ def download_via_playwright_doi_page(doi: str, output_path: str) -> bool:
                         'button:has-text("PDF")',
                         '[class*="download"]',
                         'a[title*="Download"]',
+                        'button[aria-label*="Download"]',
                     ]
 
                     for selector in download_button_selectors:
                         try:
                             button = page.query_selector(selector)
-                            if button:
+                            if button and button.is_visible():
                                 print(f"      Found download button: {selector}")
                                 # 点击按钮触发下载
-                                page.click(selector)
+                                button.click()
                                 page.wait_for_timeout(2000)
                         except Exception:
                             continue
