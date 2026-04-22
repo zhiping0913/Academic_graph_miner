@@ -218,7 +218,107 @@ def is_valid_pdf_response(resp) -> bool:
     except Exception:
         return False
 
-def sanitize_filename_custom(filename: str) -> str:
+def download_pdf_from_url(pdf_url: str, output_path: str, source_name: str = "unknown", use_playwright: bool = True) -> bool:
+    """
+    Universal PDF download function with HTTP and Playwright fallback.
+
+    Strategy:
+    1. Try direct HTTP download (fast)
+    2. If fails or protected (403), try Playwright with browser session
+
+    Args:
+        pdf_url: URL to the PDF file
+        output_path: Where to save the PDF
+        source_name: Name of download source (for logging)
+        use_playwright: Whether to try Playwright fallback (default: True)
+
+    Returns:
+        True if successfully downloaded, False otherwise
+    """
+
+    # Step 1: Try direct HTTP download (fast path)
+    try:
+        print(f"      Trying direct HTTP download...")
+        pdf_resp = requests.get(pdf_url, headers=HEADERS, timeout=30)
+
+        if pdf_resp.status_code == 200 and is_valid_pdf_response(pdf_resp):
+            with open(output_path, 'wb') as f:
+                f.write(pdf_resp.content)
+
+            if is_valid_pdf(output_path):
+                print(f"    {source_name} result: True (direct HTTP)")
+                return True
+            else:
+                os.remove(output_path)
+                print(f"      PDF validation failed after HTTP")
+
+    except Exception as e:
+        print(f"      Direct HTTP failed: {str(e)[:50]}")
+
+    # Step 2: Try Playwright for protected URLs (if enabled and not already downloaded)
+    if use_playwright and not os.path.exists(output_path):
+        print(f"      Trying Playwright for protected URL...")
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
+                )
+
+                context = browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                )
+                page = context.new_page()
+
+                try:
+                    # Load PDF URL to establish session and get cookies
+                    print(f"      Loading {pdf_url[:60]}...")
+                    response = page.goto(pdf_url, wait_until='domcontentloaded', timeout=20000)
+
+                    if response and response.status in [200, 304]:
+                        page.wait_for_timeout(2000)
+
+                        # Get cookies from browser session
+                        cookies = context.cookies()
+                        cookie_dict = {c['name']: c['value'] for c in cookies}
+
+                        # Retry download with browser cookies
+                        print(f"      Retrying with browser session...")
+                        pdf_resp = requests.get(
+                            pdf_url,
+                            headers=HEADERS,
+                            cookies=cookie_dict,
+                            timeout=30
+                        )
+
+                        if pdf_resp.status_code == 200 and is_valid_pdf_response(pdf_resp):
+                            with open(output_path, 'wb') as f:
+                                f.write(pdf_resp.content)
+
+                            if is_valid_pdf(output_path):
+                                print(f"    {source_name} result: True (Playwright session)")
+                                browser.close()
+                                return True
+                            else:
+                                os.remove(output_path)
+                                print(f"      PDF validation failed after Playwright")
+
+                except Exception as e:
+                    print(f"      Playwright error: {str(e)[:50]}")
+
+                finally:
+                    browser.close()
+
+        except Exception as e:
+            print(f"      Playwright fallback failed: {str(e)[:50]}")
+
+    # Both methods failed
+    if os.path.exists(output_path):
+        os.remove(output_path)
+
+    return False
+
+
     """Remove/replace illegal characters for cross-platform safety."""
     illegal_chars = r'[<>:"/\\|?*]'
     sanitized = re.sub(illegal_chars, '_', filename)
@@ -1080,7 +1180,7 @@ def download_via_arxiv(doi: str, output_path: str) -> bool:
     return False
 
 def download_via_crossref_links(doi: str, output_path: str) -> bool:
-    """Fetch PDF link from CrossRef API and download it."""
+    """Fetch PDF link from CrossRef API and download it using universal downloader."""
     try:
         url = f"https://api.crossref.org/works/{doi}"
         resp = requests.get(url, headers=HEADERS, timeout=15)
@@ -1094,16 +1194,14 @@ def download_via_crossref_links(doi: str, output_path: str) -> bool:
             if link_item.get('content-type') == 'application/pdf':
                 pdf_url = link_item.get('URL')
                 if pdf_url:
-                    pdf_resp = requests.get(pdf_url, headers=HEADERS, timeout=30)
-                    if pdf_resp.status_code == 200 and is_valid_pdf_response(pdf_resp):
-                        with open(output_path, 'wb') as f:
-                            f.write(pdf_resp.content)
-                        if is_valid_pdf(output_path):
-                            print(f"    crossref_links result: True")
-                            return True
-                        else:
-                            # 验证失败，删除文件
-                            os.remove(output_path)
+                    # Use universal PDF downloader with Playwright fallback
+                    return download_pdf_from_url(
+                        pdf_url=pdf_url,
+                        output_path=output_path,
+                        source_name="crossref_links",
+                        use_playwright=True
+                    )
+
     except Exception as e:
         print(f"    crossref_links exception: {e}")
 
@@ -1113,7 +1211,7 @@ def download_via_crossref_links(doi: str, output_path: str) -> bool:
     return False
 
 def download_via_openalex(doi: str, output_path: str) -> bool:
-    """Try to fetch OA PDF from OpenAlex API, using Playwright for protected URLs."""
+    """Try to fetch OA PDF from OpenAlex API using universal downloader with Playwright fallback."""
     try:
         url = f"https://api.openalex.org/works/https://doi.org/{doi}"
         print(f"    openalex: Querying API...")
@@ -1143,73 +1241,13 @@ def download_via_openalex(doi: str, output_path: str) -> bool:
 
         print(f"      Found OA URL: {oa_url[:80]}")
 
-        # 首先尝试简单的requests下载（快速路径）
-        try:
-            print(f"      Trying direct HTTP download...")
-            pdf_resp = requests.get(oa_url, headers=HEADERS, timeout=30)
-            if pdf_resp.status_code == 200 and is_valid_pdf_response(pdf_resp):
-                with open(output_path, 'wb') as f:
-                    f.write(pdf_resp.content)
-                if is_valid_pdf(output_path):
-                    print(f"    openalex result: True (direct HTTP)")
-                    return True
-                else:
-                    os.remove(output_path)
-        except Exception as e:
-            print(f"      Direct HTTP failed: {str(e)[:50]}")
-
-        # 如果直接下载失败，尝试使用Playwright（用于需要JavaScript/浏览器的链接）
-        if not os.path.exists(output_path):
-            print(f"      Trying Playwright for protected URL...")
-            try:
-                with sync_playwright() as p:
-                    browser = p.chromium.launch(
-                        headless=True,
-                        args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
-                    )
-
-                    context = browser.new_context(
-                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    )
-                    page = context.new_page()
-
-                    try:
-                        # 访问PDF链接
-                        print(f"      Loading {oa_url[:60]}...")
-                        response = page.goto(oa_url, wait_until='domcontentloaded', timeout=20000)
-
-                        if response and response.status in [200, 304]:
-                            page.wait_for_timeout(2000)
-
-                            # 检查是否获得了cookie/session能够访问PDF
-                            cookies = context.cookies()
-                            cookie_dict = {c['name']: c['value'] for c in cookies}
-
-                            # 用获得的cookies重新尝试下载
-                            pdf_resp = requests.get(
-                                oa_url,
-                                headers=HEADERS,
-                                cookies=cookie_dict,
-                                timeout=30
-                            )
-
-                            if pdf_resp.status_code == 200 and is_valid_pdf_response(pdf_resp):
-                                with open(output_path, 'wb') as f:
-                                    f.write(pdf_resp.content)
-                                if is_valid_pdf(output_path):
-                                    print(f"    openalex result: True (Playwright session)")
-                                    browser.close()
-                                    return True
-                                else:
-                                    os.remove(output_path)
-
-                    except Exception as e:
-                        print(f"      Playwright error: {str(e)[:50]}")
-                    finally:
-                        browser.close()
-
-            except Exception as e:
-                print(f"      Playwright failed: {str(e)[:50]}")
+        # Use universal PDF downloader with HTTP + Playwright fallback
+        return download_pdf_from_url(
+            pdf_url=oa_url,
+            output_path=output_path,
+            source_name="openalex",
+            use_playwright=True
+        )
 
     except Exception as e:
         print(f"    openalex exception: {e}")
@@ -1499,14 +1537,60 @@ def download_supplementary_via_datahugger(doi: str, output_dir: str) -> bool:
         return False
 
 def download_single_supplementary(url: str, output_path: str) -> bool:
-    """Download a single supplementary file with validation."""
+    """Download a single supplementary file with validation and Playwright fallback."""
     try:
+        # Try direct HTTP download first
         resp = requests.get(url, headers=HEADERS, timeout=30, stream=True, allow_redirects=True)
 
         # Check response code
         if resp.status_code != 200:
-            print(f"    Download failed, HTTP {resp.status_code}: {url[:60]}")
-            return False
+            print(f"    Initial HTTP failed {resp.status_code}, trying Playwright...")
+            # Try Playwright for protected supplements
+            try:
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(
+                        headless=True,
+                        args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
+                    )
+
+                    context = browser.new_context(
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    )
+                    page = context.new_page()
+
+                    try:
+                        page.goto(url, wait_until='domcontentloaded', timeout=20000)
+                        page.wait_for_timeout(2000)
+
+                        # Get cookies and retry
+                        cookies = context.cookies()
+                        cookie_dict = {c['name']: c['value'] for c in cookies}
+
+                        resp = requests.get(
+                            url,
+                            headers=HEADERS,
+                            cookies=cookie_dict,
+                            timeout=30,
+                            stream=True,
+                            allow_redirects=True
+                        )
+
+                        if resp.status_code != 200:
+                            print(f"    Playwright session also failed ({resp.status_code}): {url[:60]}")
+                            browser.close()
+                            return False
+
+                    except Exception as e:
+                        print(f"    Playwright error: {str(e)[:50]}")
+                        browser.close()
+                        return False
+
+                    finally:
+                        browser.close()
+
+            except Exception as e:
+                print(f"    Playwright fallback error: {str(e)[:50]}")
+                return False
 
         content_type = resp.headers.get('content-type', '').lower()
         content_length = int(resp.headers.get('content-length', 0))
@@ -1536,6 +1620,7 @@ def download_single_supplementary(url: str, output_path: str) -> bool:
 
         print(f"    ✓ Downloaded ({os.path.getsize(output_path)} bytes): {url[:60]}")
         return True
+
     except Exception as e:
         print(f"    Download exception: {str(e)[:50]}")
         return False
