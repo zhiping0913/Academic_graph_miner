@@ -319,6 +319,7 @@ def download_pdf_from_url(pdf_url: str, output_path: str, source_name: str = "un
     return False
 
 
+def sanitize_filename_custom(filename: str) -> str:
     """Remove/replace illegal characters for cross-platform safety."""
     illegal_chars = r'[<>:"/\\|?*]'
     sanitized = re.sub(illegal_chars, '_', filename)
@@ -479,7 +480,7 @@ def download_via_unpywall(doi: str, output_path: str) -> bool:
     try:
         import subprocess
         result = subprocess.run(
-            ['unpywall', 'fetch', doi, '--out', output_path],
+            ['unpywall', 'download', doi, '--path', output_path],
             capture_output=True, text=True, timeout=60
         )
         success = (result.returncode == 0 and os.path.exists(output_path) and is_valid_pdf(output_path))
@@ -1537,60 +1538,14 @@ def download_supplementary_via_datahugger(doi: str, output_dir: str) -> bool:
         return False
 
 def download_single_supplementary(url: str, output_path: str) -> bool:
-    """Download a single supplementary file with validation and Playwright fallback."""
+    """Download a single supplementary file with validation."""
     try:
-        # Try direct HTTP download first
         resp = requests.get(url, headers=HEADERS, timeout=30, stream=True, allow_redirects=True)
 
         # Check response code
         if resp.status_code != 200:
-            print(f"    Initial HTTP failed {resp.status_code}, trying Playwright...")
-            # Try Playwright for protected supplements
-            try:
-                with sync_playwright() as p:
-                    browser = p.chromium.launch(
-                        headless=True,
-                        args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
-                    )
-
-                    context = browser.new_context(
-                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    )
-                    page = context.new_page()
-
-                    try:
-                        page.goto(url, wait_until='domcontentloaded', timeout=20000)
-                        page.wait_for_timeout(2000)
-
-                        # Get cookies and retry
-                        cookies = context.cookies()
-                        cookie_dict = {c['name']: c['value'] for c in cookies}
-
-                        resp = requests.get(
-                            url,
-                            headers=HEADERS,
-                            cookies=cookie_dict,
-                            timeout=30,
-                            stream=True,
-                            allow_redirects=True
-                        )
-
-                        if resp.status_code != 200:
-                            print(f"    Playwright session also failed ({resp.status_code}): {url[:60]}")
-                            browser.close()
-                            return False
-
-                    except Exception as e:
-                        print(f"    Playwright error: {str(e)[:50]}")
-                        browser.close()
-                        return False
-
-                    finally:
-                        browser.close()
-
-            except Exception as e:
-                print(f"    Playwright fallback error: {str(e)[:50]}")
-                return False
+            print(f"    Download failed, HTTP {resp.status_code}: {url[:60]}")
+            return False
 
         content_type = resp.headers.get('content-type', '').lower()
         content_length = int(resp.headers.get('content-length', 0))
@@ -1620,7 +1575,6 @@ def download_single_supplementary(url: str, output_path: str) -> bool:
 
         print(f"    ✓ Downloaded ({os.path.getsize(output_path)} bytes): {url[:60]}")
         return True
-
     except Exception as e:
         print(f"    Download exception: {str(e)[:50]}")
         return False
