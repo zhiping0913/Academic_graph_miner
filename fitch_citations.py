@@ -10,6 +10,8 @@ from db_sqlite import load_db, upsert_paper, get_paper, is_expired
 # --- 核心配置 ---
 S2_API_URL = "https://api.semanticscholar.org/graph/v1/paper/DOI:"
 CR_API_URL = "https://api.crossref.org/works/"
+OC_CITATIONS_URL = "https://opencitations.net/index/coci/api/v1/citations/"
+OC_REFERENCES_URL = "https://opencitations.net/index/coci/api/v1/references/"
 
 # --- 算法参数 ---
 THRESHOLD = 0.1          # Jaccard 相似度阈值
@@ -76,12 +78,70 @@ def fetch_crossref(doi):
     return {}
 
 
+def fetch_opencitations(doi):
+    """
+    从 OpenCitations API 获取论文的被引和引用信息。
+
+    Args:
+        doi (str): 论文 DOI
+
+    Returns:
+        dict: 包含被引(citations)和引用(references)列表的数据
+              格式：{
+                  'citations': [{'citing': 'doi1', 'cited': 'doi2'}, ...],
+                  'references': [{'citing': 'doi1', 'cited': 'doi2'}, ...]
+              }
+              返回空字典表示请求失败
+    """
+    result = {
+        'citations': [],      # 被我引用的论文 (Forward)
+        'references': []      # 引用我的论文 (Backward)
+    }
+
+    # 获取被引 (Forward): 获取谁引用了这篇论文
+    try:
+        citations_res = requests.get(
+            f"{OC_CITATIONS_URL}{doi}",
+            headers=HEADERS,
+            timeout=15
+        )
+        if citations_res.status_code == 200:
+            citations_data = citations_res.json()
+            if isinstance(citations_data, list):
+                result['citations'] = citations_data
+    except Exception as e:
+        print(f"  [OpenCitations 被引异常] {doi}: {e}")
+
+    time.sleep(REQUEST_DELAY / 2)  # 较小的延迟
+
+    # 获取引用 (Backward): 获取这篇论文引用了谁
+    try:
+        references_res = requests.get(
+            f"{OC_REFERENCES_URL}{doi}",
+            headers=HEADERS,
+            timeout=15
+        )
+        if references_res.status_code == 200:
+            references_data = references_res.json()
+            if isinstance(references_data, list):
+                result['references'] = references_data
+    except Exception as e:
+        print(f"  [OpenCitations 引用异常] {doi}: {e}")
+
+    return result
+
+
+
 def fetch_combined_data(doi):
     """
     深度融合抓取逻辑（极致防错版）：
-    1. 同时发起 S2 和 Crossref 请求。
+    1. 同时发起 S2、Crossref 和 OpenCitations 请求。
     2. 严格检查每个层级的 NoneType 和数据类型。
-    3. 合并两者的元数据和引用列表。
+    3. 合并三个数据源的元数据和引用列表。
+
+    数据源优先级：
+    - 元数据：S2 > Crossref
+    - 引用关系：S2 + Crossref + OpenCitations
     """
     doi = doi.lower().strip()
     f_set, b_set = set(), set()
@@ -91,6 +151,9 @@ def fetch_combined_data(doi):
     s2_data = fetch_semanticscholar(doi)
     time.sleep(REQUEST_DELAY)
     cr_data = fetch_crossref(doi)
+    time.sleep(REQUEST_DELAY)
+    oc_data = fetch_opencitations(doi)
+
 
 # --- 2. 元数据融合 ---
     # 安全获取 Crossref 的列表字段
@@ -144,6 +207,28 @@ def fetch_combined_data(doi):
             if isinstance(r, dict):
                 r_doi = r.get('DOI')
                 if r_doi: b_set.add(r_doi.lower())
+
+    # 从 OpenCitations 提取
+    # Citations: 谁引用了这篇论文 (Backward - 因为是引用本论文的)
+    oc_citations = oc_data.get('citations')
+    if isinstance(oc_citations, list):
+        for cite in oc_citations:
+            if isinstance(cite, dict):
+                # OpenCitations 返回格式：{"citing": "doi1", "cited": "doi2"}
+                citing_doi = cite.get('citing')
+                if citing_doi:
+                    b_set.add(citing_doi.lower())
+
+    # References: 这篇论文引用了谁 (Forward - 因为是本论文引用的)
+    oc_refs = oc_data.get('references')
+    if isinstance(oc_refs, list):
+        for ref in oc_refs:
+            if isinstance(ref, dict):
+                # OpenCitations 返回格式：{"citing": "doi1", "cited": "doi2"}
+                cited_doi = ref.get('cited')
+                if cited_doi:
+                    f_set.add(cited_doi.lower())
+
 
     # --- 4. 有效性检查 ---
     if not metadata.get('title') and not b_set and not f_set:
