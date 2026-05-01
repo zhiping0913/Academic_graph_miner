@@ -865,7 +865,6 @@ def extract_supplementary_from_pdf_text(text: str) -> Dict[str, any]:
         'supporting material', 'supplemental material', 'online resource',
         'electronic supplementary'
     ]
-
     result = {
         'has_supplementary': False,
         'keywords_found': [],
