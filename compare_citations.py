@@ -68,16 +68,16 @@ oc_references = oc_data.get('references', [])
 
 # OpenCitations 的数据对应关系：
 # - citations 返回 {'citing': ..., 'cited': ...} 形式
-#   含义：citing 论文引用了本论文 (谁引用了我) → Backward
+#   含义：citing 论文引用了本论文 (谁引用了我) → Forward
 # - references 返回 {'citing': ..., 'cited': ...} 形式
-#   含义：本论文(citing)引用了 cited 论文 (我引用了谁) → Forward
+#   含义：本论文(citing)引用了 cited 论文 (我引用了谁) → Backward
 
-oc_forward = len(oc_references) if isinstance(oc_references, list) else 0  # 本论文引用了谁
-oc_backward = len(oc_citations) if isinstance(oc_citations, list) else 0   # 谁引用了本论文
+oc_forward = len(oc_citations) if isinstance(oc_citations, list) else 0   # 谁引用了本论文 (Forward)
+oc_backward = len(oc_references) if isinstance(oc_references, list) else 0  # 本论文引用了谁 (Backward)
 
 print(f"标题：(OpenCitations 无标题数据)")
-print(f"  → Forward (我引用的)：{oc_forward}")
-print(f"  ← Backward (引用我的)：{oc_backward}")
+print(f"  → Forward (被引用)：{oc_forward}")
+print(f"  ← Backward (引用他人)：{oc_backward}")
 
 time.sleep(1.2)
 

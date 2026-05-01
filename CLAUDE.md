@@ -86,8 +86,8 @@ You are the expert on this codebase. Your responsibilities:
 {
     "doi": "10.1038/nphys2439",
     "metadata": {"title": "...", "year": 2012, "journal": "...", "authors": [...]},
-    "forward": ["10.xxx", ...],                    # Raw citations (all)
-    "backward": ["10.yyy", ...],                   # Raw backward (all)
+    "forward": ["10.xxx", ...],                    # Forward (被引信息 - who cites this)
+    "backward": ["10.yyy", ...],                   # Backward (参考文献 - what this cites)
     "classified_forward": [{"doi": "...", "coefficient": 0.25}, ...],
     "classified_backward": [],
     "last_updated": "2026-04-21"

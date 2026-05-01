@@ -219,19 +219,19 @@ def fetch_combined_data(doi):
                 if r_doi: b_set.add(r_doi.lower())
 
     # 从 OpenCitations 提取
-    # Citations: 谁引用了这篇论文 (Backward)
+    # Citations: 谁引用了这篇论文 (Forward)
     oc_citations = oc_data.get('citations', [])
     if isinstance(oc_citations, list):
         for citing_doi in oc_citations:
             if citing_doi:
-                b_set.add(citing_doi.lower())
+                f_set.add(citing_doi.lower())
 
-    # References: 这篇论文引用了谁 (Forward)
+    # References: 这篇论文引用了谁 (Backward)
     oc_refs = oc_data.get('references', [])
     if isinstance(oc_refs, list):
         for cited_doi in oc_refs:
             if cited_doi:
-                f_set.add(cited_doi.lower())
+                b_set.add(cited_doi.lower())
 
 
     # --- 4. 有效性检查 ---

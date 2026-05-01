@@ -142,8 +142,8 @@ if oc_citations_count > 0:
     print(f"\n📌 OpenCitations Citations 样本 (前3条)：")
     oc_cites = oc_data.get('citations', [])[:3]
     for i, cite in enumerate(oc_cites, 1):
-        citing = cite.get('citing', 'N/A')
-        print(f"   {i}. {citing}")
+        # cite is now a simple DOI string after fix
+        print(f"   {i}. {cite}")
 
 print("\n" + "=" * 80)
 print("✅ 测试完成！")

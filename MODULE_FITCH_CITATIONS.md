@@ -120,12 +120,20 @@ print(f"Mined {len(db)} papers")
 
 #### `fetch_combined_data(doi: str) -> Optional[Dict]`
 
-**Purpose**: Fetch complete paper metadata from multiple sources
+**Purpose**: Fetch complete paper metadata from three API sources and merge results
 
-**Implementation** (Multi-source fusion):
-1. **Semantic Scholar API**: Title, authors, year, citations/references
-2. **Crossref API**: Journal info, DOI validation, supplementary metadata
-3. **Fallback**: Combine data, fill gaps from available sources
+**Implementation** (Triple-source fusion):
+1. **Semantic Scholar API**: Title, authors, year, citations (forward), references (backward)
+2. **Crossref API**: Journal info, DOI validation, references (backward)
+3. **OpenCitations API**: Comprehensive citation coverage (forward & backward)
+
+**Data Merge Strategy**:
+- **Metadata Priority**: S2 > Crossref (title, authors, year, journal)
+- **Forward (被引信息 - who cites this paper)**:
+  - Combines: S2 citations + OpenCitations citations
+- **Backward (参考文献 - what this paper cites)**:
+  - Combines: S2 references + Crossref references + OpenCitations references
+- **Deduplication**: Automatic via set operations across sources
 
 **Parameters**:
 - `doi` (str): Paper DOI, e.g., "10.1038/nphys2439"
@@ -133,27 +141,33 @@ print(f"Mined {len(db)} papers")
 **Returns**: Dictionary or None
 ```python
 {
-    "title": "Coherent synchrotron emission...",
-    "authors": ["Author1", "Author2"],
-    "year": 2012,
-    "journal": "Nature Physics",
     "doi": "10.1038/nphys2439",
-    "citations": ["10.xxx/yyy", "10.aaa/bbb"],    # Papers this cites
-    "references": ["10.ccc/ddd"],                 # Papers citing this
-    "source": "s2"  # or "crossref" or "hybrid"
+    "metadata": {
+        "title": "Coherent synchrotron emission...",
+        "authors": ["Author1", "Author2"],
+        "year": 2012,
+        "journal": "Nature Physics"
+    },
+    "forward": ["10.xxx/yyy", "10.aaa/bbb"],   # Who cites this paper (Citations)
+    "backward": ["10.ccc/ddd"],                 # What this paper cites (References)
+    "last_updated": "2026-04-21"
 }
 ```
 
-**API Sources** (in order of preference):
+**API Sources**:
 1. **Semantic Scholar** (`api.semanticscholar.org`)
-   - Fast, comprehensive
-   - Better citation coverage
+   - Provides citations & references
+   - Field: citations.externalIds.DOI, references.externalIds.DOI
 
 2. **Crossref** (`api.crossref.org`)
-   - Reliable, DOI authority
-   - Slower but authoritative
+   - Provides backward references only
+   - Field: reference[].DOI
 
-**Performance**: 1-2 seconds per paper (including network latency)
+3. **OpenCitations** (`opencitations.net`)
+   - Provides forward & backward
+   - Endpoints: /citations/ (citing), /references/ (cited)
+
+**Performance**: 3-6 seconds per paper (3 API calls with 1.2s delays)
 
 **Error Handling**:
 - Returns None if both APIs fail
