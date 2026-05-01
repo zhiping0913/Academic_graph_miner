@@ -80,25 +80,25 @@ def fetch_crossref(doi):
 
 def fetch_opencitations(doi):
     """
-    从 OpenCitations API 获取论文的被引和引用信息。
+    从 OpenCitations API 获取论文的被引和引用 DOI 列表。
 
     Args:
         doi (str): 论文 DOI
 
     Returns:
-        dict: 包含被引(citations)和引用(references)列表的数据
+        dict: 包含 DOI 列表的数据
               格式：{
-                  'citations': [{'citing': 'doi1', 'cited': 'doi2'}, ...],
-                  'references': [{'citing': 'doi1', 'cited': 'doi2'}, ...]
+                  'citations': ['doi1', 'doi2', ...],    # 谁引用了这篇论文 (citing字段)
+                  'references': ['doi3', 'doi4', ...]    # 这篇论文引用了谁 (cited字段)
               }
               返回空字典表示请求失败
     """
     result = {
-        'citations': [],      # 被我引用的论文 (Forward)
-        'references': []      # 引用我的论文 (Backward)
+        'citations': [],      # 谁引用了这篇论文 (cited方的citing字段)
+        'references': []      # 这篇论文引用了谁 (citing方的cited字段)
     }
 
-    # 获取被引 (Forward): 获取谁引用了这篇论文
+    # 获取被引 (Citations): 谁引用了这篇论文
     try:
         citations_res = requests.get(
             f"{OC_CITATIONS_URL}{doi}",
@@ -108,13 +108,18 @@ def fetch_opencitations(doi):
         if citations_res.status_code == 200:
             citations_data = citations_res.json()
             if isinstance(citations_data, list):
-                result['citations'] = citations_data
+                # 提取 "citing" 字段 (谁引用了这篇论文)
+                for item in citations_data:
+                    if isinstance(item, dict):
+                        citing_doi = item.get('citing')
+                        if citing_doi:
+                            result['citations'].append(citing_doi.lower())
     except Exception as e:
         print(f"  [OpenCitations 被引异常] {doi}: {e}")
 
     time.sleep(REQUEST_DELAY / 2)  # 较小的延迟
 
-    # 获取引用 (Backward): 获取这篇论文引用了谁
+    # 获取引用 (References): 这篇论文引用了谁
     try:
         references_res = requests.get(
             f"{OC_REFERENCES_URL}{doi}",
@@ -124,7 +129,12 @@ def fetch_opencitations(doi):
         if references_res.status_code == 200:
             references_data = references_res.json()
             if isinstance(references_data, list):
-                result['references'] = references_data
+                # 提取 "cited" 字段 (这篇论文引用了谁)
+                for item in references_data:
+                    if isinstance(item, dict):
+                        cited_doi = item.get('cited')
+                        if cited_doi:
+                            result['references'].append(cited_doi.lower())
     except Exception as e:
         print(f"  [OpenCitations 引用异常] {doi}: {e}")
 
@@ -209,25 +219,19 @@ def fetch_combined_data(doi):
                 if r_doi: b_set.add(r_doi.lower())
 
     # 从 OpenCitations 提取
-    # Citations: 谁引用了这篇论文 (Backward - 因为是引用本论文的)
-    oc_citations = oc_data.get('citations')
+    # Citations: 谁引用了这篇论文 (Backward)
+    oc_citations = oc_data.get('citations', [])
     if isinstance(oc_citations, list):
-        for cite in oc_citations:
-            if isinstance(cite, dict):
-                # OpenCitations 返回格式：{"citing": "doi1", "cited": "doi2"}
-                citing_doi = cite.get('citing')
-                if citing_doi:
-                    b_set.add(citing_doi.lower())
+        for citing_doi in oc_citations:
+            if citing_doi:
+                b_set.add(citing_doi.lower())
 
-    # References: 这篇论文引用了谁 (Forward - 因为是本论文引用的)
-    oc_refs = oc_data.get('references')
+    # References: 这篇论文引用了谁 (Forward)
+    oc_refs = oc_data.get('references', [])
     if isinstance(oc_refs, list):
-        for ref in oc_refs:
-            if isinstance(ref, dict):
-                # OpenCitations 返回格式：{"citing": "doi1", "cited": "doi2"}
-                cited_doi = ref.get('cited')
-                if cited_doi:
-                    f_set.add(cited_doi.lower())
+        for cited_doi in oc_refs:
+            if cited_doi:
+                f_set.add(cited_doi.lower())
 
 
     # --- 4. 有效性检查 ---
