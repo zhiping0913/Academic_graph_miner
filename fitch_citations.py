@@ -13,7 +13,7 @@ CR_API_URL = "https://api.crossref.org/works/"
 
 # --- 算法参数 ---
 THRESHOLD = 0.1          # Jaccard 相似度阈值
-MAX_DEPTH = 3            # 最大探索深度
+MAX_DEPTH = 2            # 最大探索深度
 UPDATE_DAYS = 1000         # 数据更新周期天数
 REQUEST_DELAY = 1.2      # API 限制间隔
 
@@ -22,6 +22,58 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json'
 }
+
+
+def fetch_semanticscholar(doi):
+    """
+    从 Semantic Scholar API 获取论文数据。
+
+    Args:
+        doi (str): 论文 DOI
+
+    Returns:
+        dict: 包含标题、年份、作者、引用关系的数据
+              返回空字典表示请求失败
+    """
+    s2_fields = 'title,year,venue,authors,citations.externalIds,references.externalIds'
+    try:
+        s2_res = requests.get(
+            f"{S2_API_URL}{doi}",
+            params={'fields': s2_fields},
+            headers=HEADERS,
+            timeout=15
+        )
+        if s2_res.status_code == 200:
+            return s2_res.json() or {}
+    except Exception as e:
+        print(f"  [S2 异常] {doi}: {e}")
+
+    return {}
+
+
+def fetch_crossref(doi):
+    """
+    从 Crossref API 获取论文数据。
+
+    Args:
+        doi (str): 论文 DOI
+
+    Returns:
+        dict: 包含元数据和引用关系的数据
+              返回空字典表示请求失败
+    """
+    try:
+        cr_res = requests.get(
+            f"{CR_API_URL}{doi}",
+            headers=HEADERS,
+            timeout=15
+        )
+        if cr_res.status_code == 200:
+            return cr_res.json().get('message') or {}
+    except Exception as e:
+        print(f"  [Crossref 异常] {doi}: {e}")
+
+    return {}
 
 
 def fetch_combined_data(doi):
@@ -34,29 +86,11 @@ def fetch_combined_data(doi):
     doi = doi.lower().strip()
     f_set, b_set = set(), set()
     metadata = {}
-    
+
     # --- 1. 获取原始响应 ---
-    s2_data = {}
-    cr_data = {}
-
-    # S2 请求
-    s2_fields = 'title,year,venue,authors,citations.externalIds,references.externalIds'
-    try:
-        s2_res = requests.get(f"{S2_API_URL}{doi}", params={'fields': s2_fields}, headers=HEADERS, timeout=15)
-        if s2_res.status_code == 200:
-            s2_data = s2_res.json() or {} # 确保即使返回 null 也是字典
-    except Exception as e:
-        print(f"  [S2 异常] {doi}: {e}")
-
+    s2_data = fetch_semanticscholar(doi)
     time.sleep(REQUEST_DELAY)
-
-    # Crossref 请求
-    try:
-        cr_res = requests.get(f"{CR_API_URL}{doi}", headers=HEADERS, timeout=15)
-        if cr_res.status_code == 200:
-            cr_data = cr_res.json().get('message') or {}
-    except Exception as e:
-        print(f"  [Crossref 异常] {doi}: {e}")
+    cr_data = fetch_crossref(doi)
 
 # --- 2. 元数据融合 ---
     # 安全获取 Crossref 的列表字段
@@ -125,7 +159,7 @@ def fetch_combined_data(doi):
 
 from graph_utils import calculate_jaccard
 
-def run_miner(seeds):
+def run_miner(seeds,force_update=False):
     db = load_db()
     queue = [(d.lower(), 0) for d in seeds]
     processed_session = set()
@@ -137,7 +171,7 @@ def run_miner(seeds):
         print(f"\n[层级 {depth}] 正在处理: {curr_doi}")
 
         # 检查缓存与有效期
-        if curr_doi in db and not is_expired(db[curr_doi].get('last_updated')):
+        if curr_doi in db and not is_expired(db[curr_doi].get('last_updated')) and not force_update:
             print(f"  使用本地缓存数据")
             curr_data = db[curr_doi]
         else:
@@ -164,7 +198,7 @@ def run_miner(seeds):
 
             for n_doi in neighbor_list:
                 # 预获取邻居信息以计算 Jaccard
-                if n_doi in db and not is_expired(db[n_doi].get('last_updated')):
+                if n_doi in db and not is_expired(db[n_doi].get('last_updated')) and not force_update:
                     n_data = db[n_doi]
                 else:
                     n_data = fetch_combined_data(n_doi)
@@ -216,6 +250,11 @@ if __name__ == "__main__":
         default="doi_list.txt",
         help="DOI 列表文件路径（默认：doi_list.txt）"
     )
+    parser.add_argument(
+        "--force-update",
+        action="store_true",
+        help="强制更新所有 DOI 的数据，即使本地缓存未过期"
+    )
 
     parser.add_argument(
         "--doi",
@@ -262,4 +301,4 @@ if __name__ == "__main__":
     print(f"最大深度：{MAX_DEPTH}")
     print("=" * 60 + "\n")
 
-    run_miner(seeds)
+    run_miner(seeds, force_update=args.force_update)
