@@ -601,6 +601,11 @@
             cursor: pointer;
             transition: all 0.2s;
             white-space: nowrap;
+            margin-right: 8px;
+        }
+
+        .cite-btn:last-of-type {
+            margin-right: 0;
         }
 
         .cite-btn:hover {
@@ -1008,8 +1013,67 @@
             }
         });
 
-        // 查询引用论文
-        async function showCitingPapers(doi) {
+        // 查询参考论文 (该论文引用的论文)
+        async function showReferencePapers(doi, title) {
+            citingPapersModal.classList.add('show');
+            modalBody.innerHTML = '<div class="modal-loading">加载中...</div>';
+
+            try {
+                const response = await fetch(`/api/reference-papers?doi=${encodeURIComponent(doi)}`);
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    const papers = data.papers || [];
+                    if (papers.length === 0) {
+                        modalBody.innerHTML = '<div class="modal-empty">📭 该论文未引用其他论文</div>';
+                        return;
+                    }
+
+                    let html = `
+                        <div class="modal-header">
+                            <h2>📚 该论文的参考文献</h2>
+                            <button class="modal-close" id="modalClose">✕</button>
+                        </div>
+                        <div class="modal-stats">
+                            📊 该论文引用了 <strong>${papers.length}</strong> 篇论文
+                        </div>
+                        <ul class="citing-papers-list">
+                    `;
+
+                    papers.forEach(paper => {
+                        html += `
+                            <li class="citing-paper">
+                                <div class="citing-paper-title">${paper.title}</div>
+                                <div class="citing-paper-doi">${paper.doi}</div>
+                                <div class="citing-paper-meta">
+                                    年份: ${paper.year || 'N/A'} | 期刊: ${paper.journal || 'N/A'}
+                                </div>
+                            </li>
+                        `;
+                    });
+
+                    html += '</ul>';
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = html;
+                    modalBody.innerHTML = '';
+                    modalBody.appendChild(tempDiv.querySelector('.modal-header'));
+                    modalBody.appendChild(tempDiv.querySelector('.modal-stats'));
+                    modalBody.appendChild(tempDiv.querySelector('.citing-papers-list'));
+
+                    // 重新绑定关闭按钮
+                    document.getElementById('modalClose').addEventListener('click', () => {
+                        citingPapersModal.classList.remove('show');
+                    });
+                } else {
+                    modalBody.innerHTML = `<div class="modal-empty">❌ ${data.message}</div>`;
+                }
+            } catch (error) {
+                modalBody.innerHTML = `<div class="modal-empty">❌ 加载失败: ${error.message}</div>`;
+            }
+        }
+
+        // 查询被引论文 (引用该论文的论文)
+        async function showCitationPapers(doi, title) {
             citingPapersModal.classList.add('show');
             modalBody.innerHTML = '<div class="modal-loading">加载中...</div>';
 
@@ -1025,6 +1089,10 @@
                     }
 
                     let html = `
+                        <div class="modal-header">
+                            <h2>📖 引用此论文的文章</h2>
+                            <button class="modal-close" id="modalClose">✕</button>
+                        </div>
                         <div class="modal-stats">
                             📊 共有 <strong>${papers.length}</strong> 篇文章引用了此论文
                         </div>
@@ -1044,13 +1112,28 @@
                     });
 
                     html += '</ul>';
-                    modalBody.innerHTML = html;
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = html;
+                    modalBody.innerHTML = '';
+                    modalBody.appendChild(tempDiv.querySelector('.modal-header'));
+                    modalBody.appendChild(tempDiv.querySelector('.modal-stats'));
+                    modalBody.appendChild(tempDiv.querySelector('.citing-papers-list'));
+
+                    // 重新绑定关闭按钮
+                    document.getElementById('modalClose').addEventListener('click', () => {
+                        citingPapersModal.classList.remove('show');
+                    });
                 } else {
                     modalBody.innerHTML = `<div class="modal-empty">❌ ${data.message}</div>`;
                 }
             } catch (error) {
                 modalBody.innerHTML = `<div class="modal-empty">❌ 加载失败: ${error.message}</div>`;
             }
+        }
+
+        // 查询引用论文（保留旧函数以保持兼容性）
+        async function showCitingPapers(doi) {
+            showCitationPapers(doi);
         }
 
         // 加载论文列表（带分页）
@@ -1191,8 +1274,11 @@
                                 <span class="meta-label">后向引用:</span>
                                 <span>${paper.backward_count}</span>
                             </div>
-                            <button class="cite-btn" data-doi="${paper.doi}" data-title="${paper.title}">
-                                📖 引用此论文 (${paper.backward_count})
+                            <button class="cite-btn cite-btn-reference" data-doi="${paper.doi}" data-title="${paper.title}">
+                                📚 Reference (${paper.backward_count})
+                            </button>
+                            <button class="cite-btn cite-btn-citation" data-doi="${paper.doi}" data-title="${paper.title}">
+                                📖 Citation (${paper.forward_count})
                             </button>
                         </div>
                     </div>
@@ -1201,10 +1287,16 @@
                 const checkbox = div.querySelector('.paper-checkbox');
                 checkbox.addEventListener('change', handlePaperSelection);
 
-                const citeBtn = div.querySelector('.cite-btn');
+                const citeBtn = div.querySelector('.cite-btn-reference');
                 citeBtn.addEventListener('click', (e) => {
                     e.preventDefault();
-                    showCitingPapers(e.target.dataset.doi);
+                    showReferencePapers(e.target.dataset.doi, e.target.dataset.title);
+                });
+
+                const citationBtn = div.querySelector('.cite-btn-citation');
+                citationBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    showCitationPapers(e.target.dataset.doi, e.target.dataset.title);
                 });
 
                 fragment.appendChild(div);

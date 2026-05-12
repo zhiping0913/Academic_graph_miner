@@ -252,6 +252,57 @@ def get_citing_papers():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+@app.route('/api/reference-papers', methods=['GET'])
+def get_reference_papers():
+    """获取某篇论文引用的所有文章 (该论文的参考文献)
+
+    Query params:
+    - doi: 要查询的论文 DOI
+    """
+    try:
+        target_doi = request.args.get('doi', '').strip()
+
+        if not target_doi:
+            return jsonify({'status': 'error', 'message': '请提供 DOI'}), 400
+
+        db = get_cached_db()
+
+        # 检查论文是否存在
+        if target_doi not in db:
+            return jsonify({'status': 'error', 'message': '论文不存在'}), 404
+
+        # 获取该论文的 backward (引用的论文)
+        target_paper = db[target_doi]
+        backward_refs = target_paper.get('backward', [])
+
+        # 查找这些论文的详细信息
+        reference_papers = []
+        for doi in backward_refs:
+            if doi in db:
+                paper_data = db[doi]
+                meta = paper_data.get('metadata', {})
+                reference_papers.append({
+                    'doi': doi,
+                    'title': meta.get('title', 'N/A'),
+                    'year': meta.get('year'),
+                    'journal': meta.get('journal', ''),
+                    'authors_count': len(meta.get('authors', [])),
+                    'forward_count': len(paper_data.get('forward', [])),
+                    'backward_count': len(paper_data.get('backward', []))
+                })
+
+        # 按年份降序排序
+        reference_papers.sort(key=lambda x: (-x['year'] if x['year'] else 0, x['title']))
+
+        return jsonify({
+            'status': 'success',
+            'papers': reference_papers,
+            'total': len(reference_papers)
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @app.route('/api/fetch-paper', methods=['POST'])
 def fetch_missing_paper():
     """如果数据库中不存在某个 DOI，则实时获取并保存
