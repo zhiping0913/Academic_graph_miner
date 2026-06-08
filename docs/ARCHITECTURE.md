@@ -43,10 +43,11 @@
 
 ### 系统规模
 
-- **数据库**: 17,348篇论文，1,746,807条引用关系
+- **数据库**: 144,015篇论文，13,717,945条引用关系（按年份拆分到 156 个 SQLite 文件）
 - **下载源**: 9种并行备选
-- **API集成**: Semantic Scholar, Crossref, OpenAlex, Unpywall
+- **API集成**: Semantic Scholar, Crossref, OpenAlex, Unpywall, OpenCitations
 - **Web界面**: 3个Flask服务 + 3个HTML前端
+- **相似度搜索**: `similarity_search.py` 多进程并行 Jaccard，命令行 + 库调用
 
 ---
 
@@ -54,35 +55,55 @@
 
 ### 1. 数据库层 - `db_sqlite.py`
 
-**职责**: SQLite数据操作和持久化
+**职责**: SQLite数据操作和持久化（按年份拆分的多文件布局）
+
+**存储布局** (v5)：
+```
+database/
+├── index.db          所有论文的元数据（papers 表）
+├── {year}.db         该年份论文对应的引用关系（每年一个文件）
+└── unknown.db        年份缺失的论文
+```
 
 **数据模型**:
 ```
-papers表:
-  id          INTEGER PRIMARY KEY
-  doi         TEXT UNIQUE
-  title       TEXT
-  year        INTEGER
-  journal     TEXT
-  authors     TEXT (JSON array)
+index.db / papers 表:
+  id           INTEGER PRIMARY KEY
+  doi          TEXT UNIQUE
+  title        TEXT
+  year         INTEGER
+  journal      TEXT
+  authors      TEXT (JSON array)
   last_updated TEXT
 
-citations表:
-  source_id    INTEGER (FK papers.id)
+{year}.db / citations 表:
+  source_doi   TEXT
   target_doi   TEXT
   direction    TEXT (forward/backward)
   coefficient  REAL (Jaccard or NULL)
-  PRIMARY KEY: (source_id, target_doi, direction)
+  PRIMARY KEY: (source_doi, target_doi, direction)
+  索引: idx_cit_src(source_doi, direction)
+       idx_cit_tgt(target_doi, direction)
 ```
+
+跨文件的「外键」是 DOI 字符串本身——不存在跨文件的整数 ID 引用，路由由 `_year_key(year)` 完成。
 
 **关键函数**:
 ```python
-init_db()              # 初始化数据库schema
-get_paper(doi)         # 获取单篇论文（含引用关系）
-upsert_paper(paper)    # 插入/更新论文
-load_db()              # 加载全部论文到内存 Dict
-save_db(db)            # 批量保存
-is_expired(ts, days)   # 检查缓存有效期
+init_db()                       # 初始化 index.db schema（年份 DB 延迟创建）
+get_paper(doi)                  # 单篇论文（元数据 + 引用）
+upsert_paper(paper)             # 插入/更新；自动处理年份迁移
+load_db()                       # 全库加载（昂贵，慎用）
+load_db_year_range(min, max)    # 按年份区间批量加载
+list_papers_paginated(...)      # SQL LIMIT/OFFSET 分页列表（UI 用）
+get_metadata(doi)               # 仅元数据查询
+get_metadata_batch(dois)        # 批量元数据
+search_metadata(query)          # 标题 / DOI 模糊搜索
+get_citation_counts(dois)       # 批量 forward/backward 计数
+find_citing_dois(target_doi)    # 反向查询：谁引用了 X
+list_available_years()          # 磁盘上的年份 DB 列表
+migrate_from_legacy(path)       # 从单文件迁移
+is_expired(ts, days)            # 检查缓存有效期
 ```
 
 **返回格式** - JSON格式的论文对象:
@@ -247,34 +268,31 @@ POST /api/fetch-paper
 
 #### 5.2 数据浏览 - `data_browser.py` (端口5001)
 
-**API端点**:
+**API端点**（所有端点都直接走 `db_sqlite` 的接口，不再依赖 in-memory 全库缓存）：
 ```
 GET /api/papers
   参数:
-    - page: int (页码)
-    - per_page: int (每页数量)
-    - search: str (搜索关键词)
-    - year_min/year_max: int (年份范围)
-    - ref_doi: str (参考DOI)
-    - similarity_min: float (最小相似度)
-    - sort_by: str (year/title/similarity)
-  功能: 分页查询论文列表
+    - page, per_page    (SQL LIMIT/OFFSET 分页)
+    - search            (DOI / 标题模糊)
+    - year_min, year_max (默认当年, e.g. 2026)
+    - ref_doi           (有值则走 similarity_search.find_similar 全库 Jaccard)
+    - similarity_min, sort_by
+  功能: 默认只列当年论文（~20ms），有 ref_doi 时返回全库相似度排序（~3s）
 
-GET /api/citing-papers
-  参数: doi (要查询的论文DOI)
-  功能: 获取所有引用该论文的文章
+GET /api/citing-papers?doi=…
+  反向查询：谁引用了 doi（用 find_citing_dois 并行扫所有年份 DB，~80ms）
 
-GET /api/search-papers
-  参数: q (搜索词)
-  功能: 自动完成搜索
+GET /api/reference-papers?doi=…
+  目标论文自身的 backward 引用列表 + 批量元数据
+
+GET /api/search-papers?search=…
+  自动补全（SQL LIKE，~100ms）
 
 POST /api/fetch-paper
-  参数: doi
-  功能: 实时获取缺失的论文
+  实时通过 Semantic Scholar / Crossref 拉取缺失论文并 upsert
 
 POST /api/export
-  参数: dois (DOI列表), format (json/csv/txt)
-  功能: 导出论文数据
+  导出 JSON / CSV / TXT
 ```
 
 #### 5.3 下载管理 - `download_server.py` (端口5003)
@@ -358,13 +376,15 @@ migrate(json_file=None, direction='json_to_sqlite') -> None
 ### 数据存储
 
 ```
-SQLite Database
-├── papers: 17,348条论文记录
-├── citations: 1,746,807条引用关系
+SQLite Databases (database/)
+├── index.db
+│   └── papers: 144,015 条论文记录
+├── {year}.db × 156
+│   └── citations: 共 13,717,945 条引用关系
 └── 增量更新机制
-    ├─ 新论文自动插入
-    ├─ 缓存更新检查
-    └─ 重复去重处理
+    ├─ 新论文自动插入（按年份路由到对应 {year}.db）
+    ├─ 年份变更时自动迁移 citations 到新文件
+    └─ 缓存更新检查 + 去重
 
 磁盘文件
 ├── {year}--{title}.pdf (原始论文)

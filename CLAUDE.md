@@ -1,9 +1,9 @@
 # 🏛️ Academic Graph Miner - Codebase Guide
 
-**Project**: Academic Graph Miner  
-**Purpose**: Automated citation network mining, paper downloading, and knowledge graph visualization  
-**Tech Stack**: Python 3.10+, SQLite3, Flask, NetworkX, Playwright, MarkItDown  
-**Status**: ✅ Production-ready (v4.0, as of 2026-04-21)
+**Project**: Academic Graph Miner
+**Purpose**: Automated citation network mining, paper downloading, and knowledge graph visualization
+**Tech Stack**: Python 3.10+, SQLite3 (split-by-year), Flask, NetworkX, Playwright, MarkItDown
+**Status**: ✅ Production-ready (v5, as of 2026-06-08)
 
 ---
 
@@ -11,7 +11,7 @@
 
 You are the expert on this codebase. Your responsibilities:
 
-1. **Before answering questions**: Consult the module documentation (`MODULE_*.md` files)
+1. **Before answering questions**: Consult the module documentation (`docs/MODULE_*.md` files)
 2. **After code changes**: Update relevant module documentation
 3. **Maintain consistency**: Follow conventions documented in this file
 4. **Performance-aware**: Understand performance characteristics of each module
@@ -50,20 +50,28 @@ You are the expert on this codebase. Your responsibilities:
 │   ├── data_browser.html           → Paper browser UI
 │   └── sub_network.html            → Static graph output
 │
-├── Documentation (THIS)
-│   ├── MODULE_DOWNLOAD_PAPER.md    → download_paper.py guide
-│   ├── MODULE_DATA_BROWSER.md      → data_browser.py guide
-│   ├── MODULE_DB_SQLITE.md         → Database operations
-│   ├── MODULE_FITCH_CITATIONS.md   → Citation mining algorithm
-│   ├── MODULE_GRAPH_UTILS.md       → Graph utilities
-│   ├── ARCHITECTURE.md             → System architecture overview
-│   ├── CLAUDE.md                   → This file
-│   └── [Legacy docs]               → Various MD files (consolidation in progress)
+├── Documentation
+│   ├── README.md                   → project entry point + index
+│   ├── CLAUDE.md                   → this file (project conventions for Claude)
+│   └── docs/
+│       ├── Quick_Start_AI.md       → developer / agent walkthrough (English)
+│       ├── Quick_Start_CN.md       → developer walkthrough (Chinese)
+│       ├── ARCHITECTURE.md         → system architecture overview
+│       ├── MODULE_DB_SQLITE.md     → database operations + split-by-year schema
+│       ├── MODULE_DATA_BROWSER.md  → REST endpoints
+│       ├── MODULE_DOWNLOAD_PAPER.md → 9-source PDF downloader
+│       ├── MODULE_FITCH_CITATIONS.md → citation mining algorithm
+│       ├── MODULE_GRAPH_UTILS.md   → NetworkX + Jaccard
+│       ├── DEPENDENCIES.md         → library version pins
+│       └── DOCUMENTATION_SYSTEM.md → meta-doc on the documentation layout
 │
 ├── Data Directories
 │   ├── downloaded_papers/          → Downloaded PDF/MD files
 │   ├── output/                     → Graph HTML outputs
-│   └── academic_knowledge_graph.db → SQLite database (17K papers, 1.7M citations)
+│   └── database/                   → split SQLite layout
+│       ├── index.db                  144K-paper metadata index
+│       ├── {year}.db × 156           per-year citation files
+│       └── unknown.db                NULL-year citation file
 ```
 
 ---
@@ -72,14 +80,16 @@ You are the expert on this codebase. Your responsibilities:
 
 ### 1. Citation Network Data Model
 
-**Papers Table**: 17,348 unique papers (by DOI)
+**`database/index.db` / `papers` table**: 144,015 unique papers (by DOI)
 - Metadata: title, year, journal, authors
-- Indexed by DOI (primary key)
+- Indexed by DOI and year
 
-**Citations Table**: 1,746,807 directed relationships
-- Format: (source_paper_id, target_doi, direction, coefficient)
+**`database/{year}.db` / `citations` table**: 13,717,945 directed relationships
+- One file per source-paper year (1949–2026 + `unknown.db`)
+- Format: `(source_doi, target_doi, direction, coefficient)`
 - Directions: 'forward' (cites), 'backward' (cited by)
-- Coefficient: NULL for raw edges, 0.0-1.0 for Jaccard-scored edges
+- Coefficient: NULL for raw edges, 0.0–1.0 for Jaccard-scored edges
+- Indexed on both `source_doi` and `target_doi` for fast bidirectional lookup
 
 **Paper Structure** (in-memory representation):
 ```python
@@ -105,7 +115,7 @@ Jaccard(A, B) = |citations(A) ∩ citations(B)| / |citations(A) ∪ citations(B)
 
 **Threshold**: Only papers with Jaccard ≥ 0.1 are pursued in mining (prevents topic drift)
 
-**Storage**: Only ~3% of citations have coefficients (54K out of 1.7M) - rest are NULL
+**Storage**: Only a small fraction of citations get a coefficient (the rest are NULL). The miner only scores edges that cross the `THRESHOLD`.
 
 ### 3. Download Priority (9 Sources)
 
@@ -164,14 +174,24 @@ Output: JSON/CSV/HTML/Markdown
 ## 🔧 Key Functions Reference
 
 ### Database Operations
-- `db_sqlite.init_db()` - Create schema
-- `db_sqlite.load_db()` - Load 17K papers into memory (2-5s)
-- `db_sqlite.get_paper(doi)` - Query single paper (5-10ms)
-- `db_sqlite.upsert_paper(data)` - Insert/update (10-50ms)
+- `db_sqlite.init_db()` - Create schema (idempotent)
+- `db_sqlite.get_paper(doi)` - One paper with citations (~1.5 ms)
+- `db_sqlite.get_metadata(doi)` / `get_metadata_batch(dois)` - metadata only
+- `db_sqlite.list_papers_paginated(year_min, year_max, search, sort_by, page, per_page)` - paginated listing (~20 ms / page)
+- `db_sqlite.search_metadata(query)` - SQL LIKE search (~100 ms)
+- `db_sqlite.find_citing_dois(target)` - reverse lookup (~80 ms)
+- `db_sqlite.upsert_paper(data)` - Insert/update (~10–50 ms)
+- `db_sqlite.load_db_year_range(min, max)` - year-scoped bulk load
+- `db_sqlite.load_db()` - full library, **minutes**, avoid in hot paths
+- `db_sqlite.migrate_from_legacy(path)` - one-shot import from old single-file DB
+
+### Similarity Search
+- `similarity_search.find_similar(seed_doi, year_min, year_max, top_n, direction, workers)` - parallel Jaccard ranking across year DBs (~3 s full-library)
+- CLI: `python similarity_search.py SEED_DOI [--year-min] [--year-max] [--top] [--output doi,year,title,journal,similarity]`
 
 ### Citation Mining
-- `fitch_citations.run_miner(seeds)` - Build network (1-5 hours)
-- `fitch_citations.fetch_combined_data(doi)` - Fetch metadata (1-2s)
+- `fitch_citations.run_miner(seeds, force_update=False)` - Build network (depth + threshold are module-level constants)
+- `fitch_citations.fetch_combined_data(doi)` - Fetch metadata (1–2 s)
 
 ### Paper Downloading
 - `download_paper.process_doi_list(dois, output_dir)` - Batch download
@@ -264,28 +284,28 @@ python download_server.py
 ## 🔍 How to Help Users
 
 ### "How do I download papers?"
-→ See `MODULE_DOWNLOAD_PAPER.md`: process_doi_list() example
+→ See `docs/MODULE_DOWNLOAD_PAPER.md`: process_doi_list() example
 
 ### "How do I find similar papers?"
-→ See `MODULE_GRAPH_UTILS.md`: compute_jaccard_to_seeds() example
+→ See `docs/MODULE_GRAPH_UTILS.md`: compute_jaccard_to_seeds() example
 
 ### "How do I query the database?"
-→ See `MODULE_DB_SQLITE.md`: load_db() and get_paper() examples
+→ See `docs/MODULE_DB_SQLITE.md`: load_db() and get_paper() examples
 
 ### "How do I understand the database schema?"
-→ See `MODULE_DB_SQLITE.md`: Schema section
+→ See `docs/MODULE_DB_SQLITE.md`: Schema section
 
 ### "How does the mining algorithm work?"
-→ See `MODULE_FITCH_CITATIONS.md`: Algorithm section
+→ See `docs/MODULE_FITCH_CITATIONS.md`: Algorithm section
 
 ### "How do I use the REST APIs?"
-→ See `MODULE_DATA_BROWSER.md`: API Endpoints section
+→ See `docs/MODULE_DATA_BROWSER.md`: API Endpoints section
 
 ### "Performance is slow, how do I debug?"
 → Check Performance Metrics in relevant module doc
 
 ### "I want to extend the system"
-→ See `ARCHITECTURE.md`: Extension Development section
+→ See `docs/ARCHITECTURE.md`: Extension Development section
 
 ---
 
@@ -294,37 +314,39 @@ python download_server.py
 After making changes to any file, update documentation:
 
 **Changed db_sqlite.py?**
-→ Update `MODULE_DB_SQLITE.md` (especially if schema changes)
+→ Update `docs/MODULE_DB_SQLITE.md` (especially if schema changes)
 
 **Changed download_paper.py?**
-→ Update `MODULE_DOWNLOAD_PAPER.md` (function signatures, performance)
+→ Update `docs/MODULE_DOWNLOAD_PAPER.md` (function signatures, performance)
 
 **Changed fitch_citations.py?**
-→ Update `MODULE_FITCH_CITATIONS.md` (algorithm, parameters)
+→ Update `docs/MODULE_FITCH_CITATIONS.md` (algorithm, parameters)
 
 **Changed web APIs?**
-→ Update `MODULE_DATA_BROWSER.md` (endpoint signatures)
+→ Update `docs/MODULE_DATA_BROWSER.md` (endpoint signatures)
 
 **Changed core architecture?**
-→ Update `ARCHITECTURE.md` (data flow, module interaction)
+→ Update `docs/ARCHITECTURE.md` (data flow, module interaction)
 
 **Added new file?**
-→ Create `MODULE_NEWFILE.md` following template pattern
+→ Create `docs/MODULE_NEWFILE.md` following template pattern
 
 ---
 
 ## 📊 Database Stats
 
-Current state as of 2026-04-21:
+Current state as of 2026-06-08:
 
 | Metric | Value |
 |--------|-------|
-| Papers | 17,348 |
-| Citations | 1,746,807 |
-| With Jaccard coefficient | 54,691 (3.13%) |
-| DB file size | ~500 MB |
-| Load time | 2-5 seconds |
-| Download time (100 papers) | 8-15 minutes |
+| Papers (`index.db`) | 144,015 |
+| Citations (across `{year}.db` × 156) | 13,717,945 |
+| Year DBs on disk | 156 (1949–2026 + `unknown.db`) |
+| Total DB footprint | ~2.6 GB |
+| `get_paper(doi)` | ~1.5 ms |
+| `list_papers_paginated()` per 50-row page | ~20 ms |
+| `similarity_search` full-library scan | ~3 s (8 worker processes) |
+| Download time (100 papers) | 8–15 minutes |
 
 ---
 
@@ -343,8 +365,9 @@ Current state as of 2026-04-21:
 - **Solution**: is_valid_pdf() catches these automatically
 
 ### Memory issues with load_db()
-- **Cause**: Loading 17K papers + 1.7M citations (~300MB)
-- **Solution**: Only call once per server startup (cache for 5 min)
+- **Cause**: Full library is 144K papers + 13.7M citations (several GB)
+- **Solution**: Don't call `load_db()` in hot paths. Use `load_db_year_range`,
+  `list_papers_paginated`, `get_metadata_batch`, or `get_paper` instead.
 
 ---
 
@@ -360,28 +383,28 @@ Current state as of 2026-04-21:
 
 ## 🔗 Documentation Files
 
-**Module Guides** (START HERE for specific questions):
-- `MODULE_DOWNLOAD_PAPER.md` - 📥 Paper downloading (1,534 lines)
-- `MODULE_DATA_BROWSER.md` - 📊 REST API for queries (285 lines)
-- `MODULE_DB_SQLITE.md` - 💾 Database operations (202 lines)
-- `MODULE_FITCH_CITATIONS.md` - 🔍 Citation mining (265 lines)
-- `MODULE_GRAPH_UTILS.md` - 📐 Graph algorithms (73 lines)
+**Quick-start walkthroughs**:
+- `docs/Quick_Start_AI.md` — developer / agent walkthrough (English)
+- `docs/Quick_Start_CN.md` — developer walkthrough (Chinese)
 
-**System Overview**:
-- `ARCHITECTURE.md` - 🏗️ Complete system design (670 lines)
+**Module guides** (consult before answering module-specific questions):
+- `docs/MODULE_DB_SQLITE.md` — split-by-year SQLite layout + helpers
+- `docs/MODULE_DATA_BROWSER.md` — REST endpoints
+- `docs/MODULE_DOWNLOAD_PAPER.md` — 9-source PDF downloader
+- `docs/MODULE_FITCH_CITATIONS.md` — BFS citation mining
+- `docs/MODULE_GRAPH_UTILS.md` — NetworkX + Jaccard helpers
 
-**Legacy Docs** (being consolidated):
-- COEFFICIENT_STRATEGY_ANALYSIS.md
-- PDF_TO_MARKDOWN_IMPLEMENTATION.md
-- COMPLETION_CHECKLIST.md
-- [Others] - Various implementation guides
+**System-wide**:
+- `docs/ARCHITECTURE.md` — full data flow + module interactions
+- `docs/DEPENDENCIES.md` — library version pins
+- `docs/DOCUMENTATION_SYSTEM.md` — meta-doc
 
 ---
 
 ## 📞 Getting Help
 
-1. **Module-specific question?** → Read `MODULE_*.md` file
-2. **Architecture question?** → Read `ARCHITECTURE.md`
+1. **Module-specific question?** → Read `docs/MODULE_*.md` file
+2. **Architecture question?** → Read `docs/ARCHITECTURE.md`
 3. **Performance issue?** → Check Performance Metrics in relevant module
 4. **Bug report?** → Check Troubleshooting section above
 5. **Feature request?** → See Recommended Next Steps section
@@ -390,7 +413,7 @@ Current state as of 2026-04-21:
 
 ## ✅ Before Committing Code
 
-- [ ] Read relevant `MODULE_*.md` file to understand conventions
+- [ ] Read relevant `docs/MODULE_*.md` file to understand conventions
 - [ ] Update module docs after changes
 - [ ] Run tests: `python test_*.py`
 - [ ] Check syntax: `python -m py_compile *.py`
@@ -403,13 +426,14 @@ Current state as of 2026-04-21:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 5.0 | 2026-06-08 | Split single DB into `database/index.db` + `{year}.db × 156`; new `similarity_search.py` (parallel Jaccard + CLI); `data_browser` rewritten to use SQL pagination — no in-memory full-DB cache; docs consolidated under `docs/` |
 | 4.0 | 2026-04-21 | Added PDF→MD, supplementary detection, comprehensive docs |
 | 3.0 | 2026-04-20 | Improved supplementary file finding, performance optimization |
 | 2.0 | 2026-04-15 | SQLite migration, JSON compatibility maintained |
-| 1.0 | 2026-04-01 | Initial release with 17K papers |
+| 1.0 | 2026-04-01 | Initial release |
 
 ---
 
-**Last Updated**: 2026-04-21  
+**Last Updated**: 2026-06-08  
 **Maintainer**: AI-Assisted Development  
 **Status**: ✅ Production-ready (v4.0)

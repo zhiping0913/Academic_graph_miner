@@ -101,31 +101,36 @@ CREATE TABLE papers (
 
 ---
 
-#### `citations` Table
-Stores directed citation relationships
+#### `citations` Table (one per `{year}.db`)
+Stores directed citation relationships, sharded by the source paper's year.
 
 ```sql
 CREATE TABLE citations (
-    source_id   INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
-    target_doi  TEXT    NOT NULL,
-    direction   TEXT    NOT NULL CHECK(direction IN ('forward','backward')),
+    source_doi  TEXT NOT NULL,
+    target_doi  TEXT NOT NULL,
+    direction   TEXT NOT NULL CHECK(direction IN ('forward','backward')),
     coefficient REAL,               -- NULL = raw; non-NULL = classified (Jaccard)
-    PRIMARY KEY (source_id, target_doi, direction)
+    PRIMARY KEY (source_doi, target_doi, direction)
 );
 
-CREATE INDEX idx_cit_source ON citations(source_id, direction);
+CREATE INDEX idx_cit_src ON citations(source_doi, direction);
+CREATE INDEX idx_cit_tgt ON citations(target_doi, direction);
 ```
 
 **Constraints**:
-- `source_id`: Foreign key to `papers(id)` with CASCADE delete
-- `direction`: Either 'forward' (cites) or 'backward' (cited by)
-- `coefficient`: NULL for raw edges, float 0.0-1.0 for Jaccard similarity edges
-- **Composite Primary Key**: One row per (source, target_doi, direction) combination
+- `source_doi`: identifies the citing paper (lives in `index.db.papers.doi`).
+  Cross-file foreign keys aren't enforceable in SQLite, so DOIs act as the
+  logical join key.
+- `direction`: 'forward' (this paper cites the target) or 'backward'
+  (target cites this paper).
+- `coefficient`: NULL for raw edges, float 0.0-1.0 for Jaccard edges.
 
-**Why Two Tables?**:
-- `papers` normalized to 17,348 rows (no duplication)
-- `citations` flattened to 1,746,807 rows (all relationships, forward and backward)
-- Efficient querying of connections
+**Why split by year?**
+- `index.db` stays small (~150 MB) — autocomplete and listing are SQL-fast.
+- Each `{year}.db` is independently readable; similarity_search and
+  find_citing_dois fan out across them with a process / thread pool.
+- Current scale: **144,015 papers** in `index.db`, **13,717,945 citations**
+  across **156 year DBs** (1949–2026 + `unknown.db`).
 
 ---
 
@@ -179,17 +184,15 @@ if paper:
 
 **Purpose**: Load entire database into memory (one-time operation)
 
-**Returns**: `{doi: paper_data}` dictionary with 17,348 entries
+**Returns**: `{doi: paper_data}` dictionary with ~144K entries (current scale).
 
-**Performance**: 
-- First load: 2-5 seconds (reads all papers + citations)
-- Subsequent loads: Same (full reload each time)
+**Performance**:
+- Full load reads `index.db` once and then every year DB in turn.
+  Expect **minutes**, not seconds, at the current scale.
+- This call is rarely the right tool. Almost every caller has a fast helper
+  available (see the year-scoped / metadata-only / pagination helpers below).
 
-**Use Case**: 
-- Needed for graph analysis (NetworkX construction)
-- Web servers cache this for 5 minutes
-
-**Memory Usage**: ~200-300 MB for 17K papers + 1.7M citations
+**Memory Usage**: Several GB for the full 144K-paper / 13.7M-citation snapshot.
 
 **Example**:
 ```python
@@ -251,9 +254,37 @@ upsert_paper(paper)
 
 **Behavior**: Calls `upsert_paper()` for each paper
 
-**Performance**: 10-20 seconds for 17K papers
+**Performance**: Scales linearly — each `upsert_paper` is 10–50ms, so a full
+144K-paper save runs into the hour range. Prefer incremental `upsert_paper()`.
 
-**Use Case**: Loading from JSON, bulk database updates
+---
+
+### Year-scoped & metadata-only helpers (added with the split layout)
+
+| Helper | When to use |
+|---|---|
+| `load_db_year_range(min, max, include_unknown=False)` | bulk load `{doi: paper_dict}` restricted to a year range |
+| `load_db_year(y)` | one year (or `None`/`"unknown"` for the unknown bucket) |
+| `list_papers_paginated(year_min, year_max, search, sort_by, page, per_page) -> (rows, total)` | SQL-paginated metadata listing for UI |
+| `get_metadata(doi) -> dict \| None` | one paper, metadata only (no citation join) |
+| `get_metadata_batch(dois) -> {doi: meta_dict}` | bulk metadata fetch |
+| `search_metadata(query, limit=20)` | SQL `LIKE` on doi + title |
+| `get_citation_counts(dois) -> {doi: {forward, backward}}` | batched counts only |
+| `find_citing_dois(target, direction='forward')` | reverse lookup; parallel scan with thread pool |
+| `list_available_years() -> list[str]` | year-DB files on disk |
+| `migrate_from_legacy(legacy_path=None)` | one-shot import from the legacy single-file DB |
+
+Performance at 144K-paper / 13.7M-citation scale:
+
+| Helper | Latency |
+|---|---|
+| `get_paper(doi)` | ~1.5 ms |
+| `get_metadata(doi)` | ~0.3 ms |
+| `list_papers_paginated(...)` per 50-row page | ~20 ms |
+| `search_metadata("attosecond")` | ~100 ms |
+| `get_citation_counts(200 dois)` | ~4 ms |
+| `find_citing_dois(target)` | ~80 ms (parallel across 156 year DBs) |
+| `load_db_year_range(2024, 2026)` | ~2 s (17K papers + their citations) |
 
 ---
 
@@ -360,7 +391,8 @@ Every paper returned by `get_paper()` or in `load_db()` has this structure:
 
 **Classified** (`classified_forward`, `classified_backward`):
 - Subset with Jaccard similarity coefficient
-- Only ~3% of all citations (54,691 out of 1,746,807)
+- A small fraction of all citations get coefficients (the miner only scores edges that
+  cross the `THRESHOLD`); the rest are stored with NULL coefficient
 - Indicate "similar" papers based on citation overlap
 
 **Why Both?**:
@@ -406,12 +438,15 @@ for cite in paper['classified_forward']:
 
 | Operation | Time | Notes |
 |-----------|------|-------|
-| `get_paper()` | 5-10ms | Single lookup + citation join |
-| `load_db()` | 2-5s | Load 17K papers + 1.7M citations |
-| `upsert_paper()` | 10-50ms | Insert/update + citations |
-| `save_db(17K papers)` | 10-20s | Batch upsert |
-| First connection | 50-100ms | Schema initialization |
-| Subsequent connections | 10-20ms | Reuse connection |
+| `get_paper(doi)` | ~1.5 ms | index lookup + one year-DB read |
+| `get_metadata(doi)` | ~0.3 ms | index.db only |
+| `list_papers_paginated()` | ~20 ms / page | SQL LIMIT/OFFSET on index.db |
+| `search_metadata()` | ~100 ms | SQL LIKE across 144K rows |
+| `get_citation_counts(200)` | ~4 ms | batched COUNT() per year DB |
+| `find_citing_dois()` | ~80 ms | thread pool across 156 year DBs |
+| `upsert_paper()` | 10–50 ms | index + one year DB; routes by `year` |
+| `load_db_year_range(2024, 2026)` | ~2 s | 17K papers with citations |
+| `load_db()` (full library) | **minutes** | reads all 156 year DBs — avoid |
 
 ---
 
@@ -427,8 +462,9 @@ Input:
   classified_forward: [{"doi": "10.xxxx", "coefficient": 0.35}]
 
 Output:
-  Citations table gets: (source_id, "10.xxxx", "forward", 0.35)
-                        (source_id, "10.yyyy", "forward", NULL)
+  citations rows in {year}.db:
+    (source_doi, "10.xxxx", "forward", 0.35)
+    (source_doi, "10.yyyy", "forward", NULL)
 ```
 
 **Priority**: Classified entries (with coefficient) override raw entries
