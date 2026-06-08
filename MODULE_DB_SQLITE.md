@@ -1,8 +1,35 @@
 # 💾 Database Module Reference (db_sqlite.py)
 
-**File**: `db_sqlite.py` (202 lines)  
-**Purpose**: SQLite persistence layer for papers and citation relationships  
+**File**: `db_sqlite.py`
+**Purpose**: SQLite persistence layer for papers and citation relationships
 **Status**: Production-ready
+
+---
+
+## 🗂️ Storage layout (v5, 2026-06-08)
+
+The single-file `academic_knowledge_graph.db` has been split into the
+`database/` directory:
+
+```
+database/
+    index.db        papers metadata only (doi, title, year, journal, authors, last_updated)
+    {year}.db       citations whose source paper was published in {year}
+                    (citations(source_doi, target_doi, direction, coefficient))
+    unknown.db      citations for papers with NULL / non-integer year
+```
+
+- The `papers` table lives in `index.db` and is indexed by `doi` (and by `year`).
+- Each `{year}.db` keys citations by `source_doi` directly (no integer FK across files).
+- `upsert_paper()` automatically deletes citations from the old year-DB when a
+  paper's year changes.
+- Year-DB files are created lazily on first write; missing files read as empty.
+- Migration helper: `python db_sqlite.py migrate [legacy_db_path]` copies the
+  old single-file DB into the new layout.
+
+**All other modules (`fitch_citations`, `data_browser`, `graph_server`,
+`data_export`, `visualize_graph`) access the database exclusively through
+`db_sqlite`'s public API — do not open `index.db` or `{year}.db` directly.**
 
 ---
 
