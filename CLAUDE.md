@@ -87,7 +87,7 @@ You are the expert on this codebase. Your responsibilities:
 **`database/{year}.db` / `citations` table**: 13,717,945 directed relationships
 - One file per source-paper year (1949–2026 + `unknown.db`)
 - Format: `(source_doi, target_doi, direction, coefficient)`
-- Directions: 'forward' (cites), 'backward' (cited by)
+- Direction values stored on disk: `'forward'` (= Citation list / incoming citers) and `'backward'` (= Reference list / outgoing references). These legacy column values are encapsulated inside `db_sqlite.py`; every public Python API and JSON response uses the words **`citation`** and **`reference`** instead.
 - Coefficient: NULL for raw edges, 0.0–1.0 for Jaccard-scored edges
 - Indexed on both `source_doi` and `target_doi` for fast bidirectional lookup
 
@@ -96,10 +96,10 @@ You are the expert on this codebase. Your responsibilities:
 {
     "doi": "10.1038/nphys2439",
     "metadata": {"title": "...", "year": 2012, "journal": "...", "authors": [...]},
-    "forward": ["10.xxx", ...],                    # Forward (被引信息 - who cites this)
-    "backward": ["10.yyy", ...],                   # Backward (参考文献 - what this cites)
-    "classified_forward": [{"doi": "...", "coefficient": 0.25}, ...],
-    "classified_backward": [],
+    "citation":  ["10.xxx", ...],                  # Citation (被引信息 - who cites this)
+    "reference": ["10.yyy", ...],                  # Reference (参考文献 - what this cites)
+    "classified_citation":  [{"doi": "...", "coefficient": 0.25}, ...],
+    "classified_reference": [],
     "last_updated": "2026-04-21"
 }
 ```

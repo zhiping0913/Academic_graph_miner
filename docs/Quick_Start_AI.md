@@ -97,10 +97,10 @@ from db_sqlite import (
         "journal": "Nature Physics",
         "authors": ["...", ...],
     },
-    "forward":             ["10.xxx", ...],   # outgoing edges (this paper's references)
-    "backward":            ["10.yyy", ...],   # incoming edges (papers citing this one)
-    "classified_forward":  [{"doi": "...", "coefficient": 0.31}, ...],
-    "classified_backward": [...],
+    "citation":             ["10.xxx", ...],   # papers citing this one (incoming)   — "Citation"
+    "reference":            ["10.yyy", ...],   # this paper's references (outgoing)  — "Reference"
+    "classified_citation":  [{"doi": "...", "coefficient": 0.31}, ...],
+    "classified_reference": [...],
     "last_updated": "2026-06-08",
 }
 ```
@@ -114,7 +114,7 @@ from db_sqlite import (
     get_metadata,                 # one paper, metadata only
     get_metadata_batch,           # bulk metadata by DOI list
     search_metadata,              # SQL LIKE on doi + title; ranked
-    get_citation_counts,          # batched {doi: {forward, backward}}
+    get_citation_counts,          # batched {doi: {citation, reference}}
     find_citing_dois,             # reverse lookup: who cites target_doi
     list_available_years,         # year-DB files on disk
 )
@@ -131,7 +131,7 @@ Pick the right helper:
 | Paginated UI listing | `list_papers_paginated(...)` |
 | Autocomplete / search box | `search_metadata(query, limit=20)` |
 | Counts only (no neighbor lists) | `get_citation_counts(dois)` |
-| Who cites X? | `find_citing_dois(target_doi, direction='forward')` |
+| Who cites X? | `find_citing_dois(target_doi)` (default `direction='reference'`) |
 
 ### One-shot legacy migration
 
@@ -160,15 +160,15 @@ hits = find_similar(
     year_min=2020,     # optional inclusive lower bound
     year_max=2026,     # optional inclusive upper bound
     top_n=50,
-    direction="both",  # "forward" | "backward" | "both"
+    direction="both",  # "citation" | "reference" | "both"
     workers=None,      # default min(cpu_count, 8)
 )
 # hits = [{doi, year, title, journal, similarity, citation_count}, ...]
 ```
 
-`direction="both"` (default) takes the union of `forward + backward` as the
-neighborhood. `"forward"` matches only references; `"backward"` matches only
-citers.
+`direction="both"` (default) takes the union of `citation + reference` as the
+neighborhood. `"citation"` matches only citers (Citation list); `"reference"`
+matches only references (Reference list).
 
 ### CLI
 
@@ -201,7 +201,7 @@ Reference timings on this host (144K papers / 156 year DBs):
 ## 5. Citation mining — `fitch_citations.py`
 
 BFS crawler over Semantic Scholar + Crossref (+ OpenCitations as a fallback for
-the forward direction).
+both `citation` and `reference` directions).
 
 ### Library
 
@@ -212,14 +212,14 @@ from fitch_citations import run_miner, fetch_combined_data
 # module-level constants (MAX_DEPTH=2, THRESHOLD=0.1) inside fitch_citations.py.
 run_miner(seeds=["10.1038/nphys2439"], force_update=False)
 
-# Fetch metadata + forward/backward DOI lists for a single paper
+# Fetch metadata + citation/reference DOI lists for a single paper
 paper = fetch_combined_data("10.1038/nphys2439")
 ```
 
 `run_miner(seeds, force_update=False)` walks the seeds, fetches each paper's
-forward + backward lists, computes Jaccard against seeds, and queues neighbors
-above `THRESHOLD` for the next depth level. Everything is persisted via
-`upsert_paper`.
+`citation` + `reference` lists, computes Jaccard against seeds, and queues
+neighbors above `THRESHOLD` for the next depth level. Everything is persisted
+via `upsert_paper`.
 
 ### CLI
 
@@ -312,7 +312,7 @@ Run any of them with `python <script>.py`.
 | `GET /api/papers?ref_doi=…` | delegates to `similarity_search.find_similar`; full-library Jaccard ranking (~3 s) |
 | `GET /api/search-papers?search=…` | SQL `LIKE` on title + DOI (~100 ms) |
 | `GET /api/citing-papers?doi=…` | parallel reverse lookup (~80 ms) |
-| `GET /api/reference-papers?doi=…` | target's own `backward` list + batched metadata (~40 ms) |
+| `GET /api/reference-papers?doi=…` | target's own `reference` list + batched metadata (~40 ms) |
 | `POST /api/fetch-paper` | pulls missing DOI from upstream APIs, persists via `upsert_paper` |
 | `POST /api/export` | JSON / CSV / TXT export of a selected DOI list |
 
@@ -333,7 +333,7 @@ sim = calculate_jaccard(["10.a/b", "10.c/d"], ["10.c/d", "10.e/f"])  # 0.333…
 # Build a NetworkX DiGraph centered on seeds
 db = load_db()                  # or per-year load if scope is tight
 G = extract_subgraph(db, seed_dois=["10.1038/nphys2439"],
-                     max_forward_dist=1, max_backward_dist=1)
+                     max_citation_dist=1, max_reference_dist=1)
 G.number_of_nodes(), G.number_of_edges()
 ```
 
@@ -379,7 +379,7 @@ python download_paper.py --file selected.txt --output downloaded_papers/
 ```python
 from db_sqlite import find_citing_dois, get_metadata_batch
 
-citers = find_citing_dois("10.1038/nphys2439", direction="forward")
+citers = find_citing_dois("10.1038/nphys2439")  # default direction='reference'
 meta = get_metadata_batch(citers)
 for doi in citers:
     m = meta[doi]["metadata"]
@@ -395,10 +395,12 @@ for doi in citers:
   other years. Use the helpers in §3.
 - **`load_db()` is expensive (~minutes for the full 144K-paper DB).** Almost
   every caller has a year-scoped helper available; use it.
-- **`forward` vs `backward` semantics.** In this codebase, `forward` is the
-  paper's outgoing edges (its own references); `backward` is incoming edges
-  (papers citing it). Recent commits have re-aligned the OpenCitations mapping
-  to match.
+- **Naming**. The Python API and JSON responses use **`citation`** (incoming —
+  papers citing this one; 被引) and **`reference`** (outgoing — papers this one
+  cites; 参考文献). The underlying SQLite `direction` column still stores the
+  legacy values `'forward'` (= `citation`) and `'backward'` (= `reference`);
+  that translation happens inside `db_sqlite.py` and never leaks out. Nothing
+  outside that module should mention `forward` / `backward`.
 - **API rate limits.** `fitch_citations.py` sleeps `REQUEST_DELAY = 1.2 s`
   between API calls. Don't lower this in production — Semantic Scholar /
   Crossref will throttle aggressively.

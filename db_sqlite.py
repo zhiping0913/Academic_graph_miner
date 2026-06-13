@@ -117,6 +117,31 @@ def list_available_years() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Naming bridge:
+#
+# The public Python API uses `citation` (incoming — who cites this paper) and
+# `reference` (outgoing — what this paper cites). The on-disk SQLite schema
+# was originally written with `direction='forward'` for the Citation list and
+# `direction='backward'` for the Reference list. Migrating 13.7M rows across
+# 156 year DBs has zero functional benefit, so the DB keeps its old column
+# values and every read/write through this module translates at the boundary.
+# Nothing outside this module should reference the strings 'forward'/'backward'.
+# ---------------------------------------------------------------------------
+
+_KEY_TO_DB_DIR = {"citation": "forward", "reference": "backward"}
+_DB_DIR_TO_KEY = {v: k for k, v in _KEY_TO_DB_DIR.items()}
+
+
+def _to_db_direction(key: str) -> str:
+    try:
+        return _KEY_TO_DB_DIR[key]
+    except KeyError as e:
+        raise ValueError(
+            f"direction must be 'citation' or 'reference'; got {key!r}"
+        ) from e
+
+
+# ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
 
@@ -214,12 +239,13 @@ def upsert_paper(paper_data: dict) -> None:
         idx.close()
 
     # ---- build citation rows ---------------------------------------------
+    # Public keys are citation/reference; DB still uses forward/backward.
     rows: list[tuple] = []
-    for direction in ("forward", "backward"):
-        for target in paper_data.get(direction, []):
-            rows.append((doi, target, direction, None))
-        for entry in paper_data.get(f"classified_{direction}", []):
-            rows.append((doi, entry["doi"], direction, entry["coefficient"]))
+    for key, db_dir in _KEY_TO_DB_DIR.items():
+        for target in paper_data.get(key, []):
+            rows.append((doi, target, db_dir, None))
+        for entry in paper_data.get(f"classified_{key}", []):
+            rows.append((doi, entry["doi"], db_dir, entry["coefficient"]))
 
     # Dedup: prefer the row with a non-null coefficient
     seen: dict[tuple, float | None] = {}
@@ -334,19 +360,20 @@ def is_expired(last_updated_str: str | None, update_days: int = 1000) -> bool:
 # ---------------------------------------------------------------------------
 
 def _build_paper_dict(row, citations) -> dict:
-    forward, backward = [], []
-    classified_forward, classified_backward = [], []
+    citation, reference = [], []
+    classified_citation, classified_reference = [], []
     for c in citations:
-        if c["direction"] == "forward":
-            forward.append(c["target_doi"])
+        key = _DB_DIR_TO_KEY[c["direction"]]
+        if key == "citation":
+            citation.append(c["target_doi"])
             if c["coefficient"] is not None:
-                classified_forward.append(
+                classified_citation.append(
                     {"doi": c["target_doi"], "coefficient": c["coefficient"]}
                 )
         else:
-            backward.append(c["target_doi"])
+            reference.append(c["target_doi"])
             if c["coefficient"] is not None:
-                classified_backward.append(
+                classified_reference.append(
                     {"doi": c["target_doi"], "coefficient": c["coefficient"]}
                 )
 
@@ -358,10 +385,10 @@ def _build_paper_dict(row, citations) -> dict:
             "journal": row["journal"],
             "authors": json.loads(row["authors"]) if row["authors"] else [],
         },
-        "forward": forward,
-        "backward": backward,
-        "classified_forward": classified_forward,
-        "classified_backward": classified_backward,
+        "citation": citation,
+        "reference": reference,
+        "classified_citation": classified_citation,
+        "classified_reference": classified_reference,
         "last_updated": row["last_updated"],
     }
 
@@ -598,7 +625,11 @@ def _metadata_row_to_dict(row) -> dict:
 # ---------------------------------------------------------------------------
 
 def get_citation_counts(dois: list[str]) -> dict[str, dict]:
-    """Return {doi: {'forward': N, 'backward': N}} via per-year batch queries."""
+    """Return {doi: {'citation': N, 'reference': N}} via per-year batch queries.
+
+    'citation' = number of papers citing this DOI (incoming).
+    'reference' = number of papers this DOI cites (outgoing).
+    """
     if not dois:
         return {}
 
@@ -609,7 +640,7 @@ def get_citation_counts(dois: list[str]) -> dict[str, dict]:
         yk = _year_key(m["metadata"]["year"]) if m else UNKNOWN_YEAR_KEY
         by_year.setdefault(yk, []).append(d)
 
-    out: dict[str, dict] = {d: {"forward": 0, "backward": 0} for d in dois}
+    out: dict[str, dict] = {d: {"citation": 0, "reference": 0} for d in dois}
     CHUNK = 500
     for year_key, group in by_year.items():
         path = _year_db_path(year_key)
@@ -627,7 +658,7 @@ def get_citation_counts(dois: list[str]) -> dict[str, dict]:
                     chunk,
                 ).fetchall()
                 for r in rows:
-                    out[r["source_doi"]][r["direction"]] = r["n"]
+                    out[r["source_doi"]][_DB_DIR_TO_KEY[r["direction"]]] = r["n"]
         finally:
             ycon.close()
     return out
@@ -638,14 +669,19 @@ def get_citation_counts(dois: list[str]) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 def find_citing_dois(target_doi: str,
-                     direction: str = "forward",
+                     direction: str = "reference",
                      workers: int | None = None) -> list[str]:
     """Return every source_doi that has *target_doi* in the given direction.
 
+    The default ``direction='reference'`` returns the citers of ``target_doi``
+    — papers whose own Reference list contains it. Pass ``direction='citation'``
+    for the inverse query (papers that list ``target_doi`` in their Citation
+    list, which mirrors ``target_doi``'s own References when only one side of
+    the edge has been mined).
+
     Scans every year DB in parallel (idx_cit_tgt makes per-file lookup O(log n)).
     """
-    if direction not in ("forward", "backward"):
-        raise ValueError("direction must be 'forward' or 'backward'")
+    db_dir = _to_db_direction(direction)
     from concurrent.futures import ThreadPoolExecutor
 
     if workers is None:
@@ -660,7 +696,7 @@ def find_citing_dois(target_doi: str,
             rows = ycon.execute(
                 "SELECT source_doi FROM citations "
                 "WHERE target_doi=? AND direction=?",
-                (target_doi, direction),
+                (target_doi, db_dir),
             ).fetchall()
             return [r["source_doi"] for r in rows]
         finally:

@@ -124,8 +124,8 @@ def export_to_csv(dois: list[str], output_file: str):
             "Year",
             "Journal",
             "Authors",
-            "Forward Citations",
-            "Backward Citations",
+            "Citations (papers citing this)",
+            "References (papers this cites)",
             "Last Updated"
         ])
 
@@ -134,8 +134,8 @@ def export_to_csv(dois: list[str], output_file: str):
             if paper:
                 meta = paper.get("metadata", {})
                 authors_str = "; ".join(meta.get("authors", []))
-                forward_str = "; ".join(paper.get("forward", []))
-                backward_str = "; ".join(paper.get("backward", []))
+                citation_str = "; ".join(paper.get("citation", []))
+                reference_str = "; ".join(paper.get("reference", []))
 
                 writer.writerow([
                     doi,
@@ -143,8 +143,8 @@ def export_to_csv(dois: list[str], output_file: str):
                     meta.get("year", ""),
                     meta.get("journal", ""),
                     authors_str,
-                    forward_str,
-                    backward_str,
+                    citation_str,
+                    reference_str,
                     paper.get("last_updated", "")
                 ])
                 found_count += 1
@@ -161,14 +161,14 @@ def export_to_txt(dois: list[str], output_file: str, key_list: list[str] | None 
         dois: List of DOI strings to export
         output_file: Output file path
         key_list: Which fields to include. Default: ['doi'] for simple DOI list.
-                  Options: 'doi', 'title', 'year', 'journal', 'authors', 'forward', 'backward'
+                  Options: 'doi', 'title', 'year', 'journal', 'authors', 'citation', 'reference'
                   Example: ['doi', 'title', 'year'] or just ['doi'] for DOI list only
     """
     if key_list is None:
         key_list = ['doi']
 
     # Normalize key_list
-    valid_keys = {'doi', 'title', 'year', 'journal', 'authors', 'forward', 'backward', 'last_updated'}
+    valid_keys = {'doi', 'title', 'year', 'journal', 'authors', 'citation', 'reference', 'last_updated'}
     key_list = [k for k in key_list if k in valid_keys]
     if not key_list:
         key_list = ['doi']
@@ -227,18 +227,18 @@ def export_to_txt(dois: list[str], output_file: str, key_list: list[str] | None 
                         authors = ", ".join(meta["authors"])
                         f.write(f"Authors: {authors}\n")
 
-                    if 'forward' in key_list:
-                        forward = paper.get("forward", [])
-                        if forward:
-                            f.write(f"\nForward Citations ({len(forward)}):\n")
-                            for cite in forward:
+                    if 'citation' in key_list:
+                        citation = paper.get("citation", [])
+                        if citation:
+                            f.write(f"\nCitations — papers citing this ({len(citation)}):\n")
+                            for cite in citation:
                                 f.write(f"  - {cite}\n")
 
-                    if 'backward' in key_list:
-                        backward = paper.get("backward", [])
-                        if backward:
-                            f.write(f"\nBackward Citations ({len(backward)}):\n")
-                            for cite in backward:
+                    if 'reference' in key_list:
+                        reference = paper.get("reference", [])
+                        if reference:
+                            f.write(f"\nReferences — papers this cites ({len(reference)}):\n")
+                            for cite in reference:
                                 f.write(f"  - {cite}\n")
 
                     if 'last_updated' in key_list and paper.get("last_updated"):
@@ -308,7 +308,7 @@ Examples:
         "--keys",
         nargs="+",
         default=["doi"],
-        help="Fields to include: doi, title, year, journal, authors, forward, backward, last_updated (default: ['doi'] for simple DOI list)"
+        help="Fields to include: doi, title, year, journal, authors, citation, reference, last_updated (default: ['doi'] for simple DOI list)"
     )
 
     args = parser.parse_args()

@@ -195,12 +195,12 @@
     <textarea id="dois" placeholder="10.1088/1367-2630/15/1/015025&#10;10.1002/lpor.202401986"></textarea>
   </div>
   <div class="ctrl-group">
-    <label>向前层数</label>
-    <input type="number" id="max_forward_dist" value="1" min="0" max="5">
+    <label>Citation 层数（被引方向）</label>
+    <input type="number" id="max_citation_dist" value="1" min="0" max="5">
   </div>
   <div class="ctrl-group">
-    <label>向后层数</label>
-    <input type="number" id="max_backward_dist" value="1" min="0" max="5">
+    <label>Reference 层数（参考文献方向）</label>
+    <input type="number" id="max_reference_dist" value="1" min="0" max="5">
   </div>
   <div class="ctrl-group" style="gap:6px">
     <button id="btn-build" onclick="loadGraph()">构建图谱</button>
@@ -232,8 +232,8 @@
   async function loadGraph() {
     const raw = document.getElementById('dois').value.trim();
     const seed_dois = raw.split('\n').map(s => s.trim()).filter(Boolean);
-    const max_forward_dist = Math.min(Math.max(parseInt(document.getElementById('max_forward_dist').value) || 0, 0), 5);
-    const max_backward_dist = Math.min(Math.max(parseInt(document.getElementById('max_backward_dist').value) || 0, 0), 5);
+    const max_citation_dist = Math.min(Math.max(parseInt(document.getElementById('max_citation_dist').value) || 0, 0), 5);
+    const max_reference_dist = Math.min(Math.max(parseInt(document.getElementById('max_reference_dist').value) || 0, 0), 5);
 
     if (!seed_dois.length) {
       setStatus('请至少输入一个 DOI', true);
@@ -249,7 +249,7 @@
       const res = await fetch('/api/graph', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seed_dois, max_forward_dist, max_backward_dist })
+        body: JSON.stringify({ seed_dois, max_citation_dist, max_reference_dist })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);

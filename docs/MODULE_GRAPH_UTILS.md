@@ -29,8 +29,8 @@ print(f"Similarity: {similarity}")  # 0.5
 G = extract_subgraph(
     db=db,
     seed_dois=["10.1038/nphys2439"],
-    max_forward_dist=1,
-    max_backward_dist=1
+    max_citation_dist=1,
+    max_reference_dist=1
 )
 print(f"Nodes: {G.number_of_nodes()}")
 print(f"Edges: {G.number_of_edges()}")
@@ -96,20 +96,20 @@ print(similarity)  # 0.4
 
 ### Subgraph Extraction
 
-#### `extract_subgraph(db: Dict, seed_dois: List[str], max_forward_dist: int, max_backward_dist: int) -> nx.DiGraph`
+#### `extract_subgraph(db: Dict, seed_dois: List[str], max_citation_dist: int, max_reference_dist: int) -> nx.DiGraph`
 
 **Purpose**: Extract a directed subgraph of papers around seed DOIs
 
 **Graph Definition**:
 - **Nodes**: Papers (with attributes: title, year, is_seed)
 - **Edges**: Citation relationships (with weight: Jaccard coefficient if available)
-- **Direction**: Forward = "cites", Backward = "cited by"
+- **Direction**: traversal hops along two independent edge sets — `citation` (incoming, papers citing the seed) and `reference` (outgoing, papers the seed cites).
 
 **Parameters**:
 - `db` (Dict): Loaded database from `load_db()`
 - `seed_dois` (List[str]): Starting papers, e.g., `["10.1038/nphys2439"]`
-- `max_forward_dist` (int): How many hops forward (outgoing citations)
-- `max_backward_dist` (int): How many hops backward (incoming citations)
+- `max_citation_dist` (int): Hops along the Citation edges (incoming — papers citing the seed)
+- `max_reference_dist` (int): Hops along the Reference edges (outgoing — papers the seed cites)
 
 **Returns**: `networkx.DiGraph` with:
 - Nodes: `{"doi": {"metadata": {...}, "is_seed": bool}}`
@@ -118,10 +118,10 @@ print(similarity)  # 0.4
 **Extraction Algorithm** (BFS):
 ```
 1. Start with seed_dois as queue
-2. Explore forward citations (papers this cites):
-   - Add reachable papers up to max_forward_dist hops
-3. Explore backward citations (papers citing this):
-   - Add reachable papers up to max_backward_dist hops
+2. Explore Citation edges (incoming — papers citing the seed):
+   - Add reachable papers up to max_citation_dist hops
+3. Explore Reference edges (outgoing — papers the seed cites):
+   - Add reachable papers up to max_reference_dist hops
 4. Keep only papers found within distance limits
 5. Return as NetworkX DiGraph
 ```
@@ -139,8 +139,8 @@ db = load_db()
 G = extract_subgraph(
     db=db,
     seed_dois=["10.1038/nphys2439"],
-    max_forward_dist=1,    # Papers this cites
-    max_backward_dist=1    # Papers citing this
+    max_citation_dist=1,    # Papers citing the seed (Citation list, incoming)
+    max_reference_dist=1    # Papers the seed cites (Reference list, outgoing)
 )
 
 print(f"Subgraph size: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
@@ -159,7 +159,7 @@ for u, v, data in G.edges(data=True):
 
 #### Subgraph Distance Parameters
 
-| Scenario | max_forward_dist | max_backward_dist | Size | Use Case |
+| Scenario | max_citation_dist | max_reference_dist | Size | Use Case |
 |----------|------------------|------------------|------|----------|
 | Direct connections | 1 | 1 | ~50 nodes | Quick overview |
 | 2-hop neighborhood | 2 | 2 | ~200 nodes | Related work |
@@ -190,9 +190,9 @@ for u, v, data in G.edges(data=True):
 **Algorithm**:
 ```
 For each seed_doi:
-  1. Get backward citations of seed
-  2. Get backward citations of node
-  3. Compute Jaccard between the two lists
+  1. Get the seed's `reference` list (its references)
+  2. Get the node's `reference` list (its references)
+  3. Compute Jaccard between the two reference lists
   4. Return result
 ```
 
@@ -312,7 +312,7 @@ import networkx as nx
 
 # Create focused knowledge graph
 seeds = ["10.1038/nphys2439", "10.1103/PhysRevE.101.033202"]
-G = extract_subgraph(db, seeds, max_forward_dist=2, max_backward_dist=2)
+G = extract_subgraph(db, seeds, max_citation_dist=2, max_reference_dist=2)
 
 # Analyze structure
 print(f"Papers in graph: {G.number_of_nodes()}")
@@ -349,12 +349,12 @@ for doi, count in influential_citers:
 # For large graphs, consider these optimizations:
 
 # 1. Limit subgraph depth
-G = extract_subgraph(db, seeds, max_forward_dist=1, max_backward_dist=1)
+G = extract_subgraph(db, seeds, max_citation_dist=1, max_reference_dist=1)
 # Reduces computation time and memory
 
 # 2. Batch Jaccard calculations
 similarities = [
-    calculate_jaccard(paper1['backward'], paper2['backward'])
+    calculate_jaccard(paper1['reference'], paper2['reference'])
     for paper2 in db.values()
 ]
 # ~100ms for full database
@@ -410,8 +410,8 @@ similarity_matrix = np.zeros((n, n))
 for i, doi1 in enumerate(dois):
     for j, doi2 in enumerate(dois[i:], start=i):
         sim = calculate_jaccard(
-            db[doi1]['backward'],
-            db[doi2]['backward']
+            db[doi1]['reference'],
+            db[doi2]['reference']
         )
         similarity_matrix[i, j] = sim
         similarity_matrix[j, i] = sim  # Symmetric

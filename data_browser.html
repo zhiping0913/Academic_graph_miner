@@ -1267,18 +1267,18 @@
                                 <span>${paper.authors_count}</span>
                             </div>
                             <div class="meta-item">
-                                <span class="meta-label">前向引用:</span>
-                                <span>${paper.forward_count}</span>
+                                <span class="meta-label">被引 (Citation):</span>
+                                <span>${paper.citation_count}</span>
                             </div>
                             <div class="meta-item">
-                                <span class="meta-label">后向引用:</span>
-                                <span>${paper.backward_count}</span>
+                                <span class="meta-label">参考文献 (Reference):</span>
+                                <span>${paper.reference_count}</span>
                             </div>
                             <button class="cite-btn cite-btn-reference" data-doi="${paper.doi}" data-title="${paper.title}">
-                                📚 Reference (${paper.backward_count})
+                                📚 Reference (${paper.reference_count})
                             </button>
                             <button class="cite-btn cite-btn-citation" data-doi="${paper.doi}" data-title="${paper.title}">
-                                📖 Citation (${paper.forward_count})
+                                📖 Citation (${paper.citation_count})
                             </button>
                         </div>
                     </div>

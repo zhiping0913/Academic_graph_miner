@@ -24,5 +24,5 @@ if __name__ == "__main__":
     db = load_db()
     # 示例：只看这篇文章周围 1 层的内容
     target_seeds = ["10.1088/1367-2630/15/1/015025"]
-    sub_g = extract_subgraph(db, target_seeds, max_forward_dist=1, max_backward_dist=1)
+    sub_g = extract_subgraph(db, target_seeds, max_citation_dist=1, max_reference_dist=1)
     visualize_subgraph(sub_g, output=OUTPUT_FILE)

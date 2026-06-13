@@ -62,7 +62,7 @@ curl 'http://localhost:5001/api/papers?per_page=50&page=1'
 
 **Plain listing path** (no `ref_doi`):
 - Calls `db_sqlite.list_papers_paginated(year_min, year_max, search, sort_by, page, per_page)`.
-- Fetches `(forward, backward)` counts for the returned 50 DOIs via
+- Fetches `(citation, reference)` counts for the returned 50 DOIs via
   `db_sqlite.get_citation_counts` — no full neighbor lists are loaded.
 - Typical latency: **~20 ms / page**.
 
@@ -90,8 +90,8 @@ Response shape (both paths):
       "year": 2026,
       "journal": "Physics of Plasmas",
       "authors_count": 7,
-      "forward_count": 38,
-      "backward_count": 24,
+      "citation_count": 38,
+      "reference_count": 24,
       "similarity": 0.1045        // present only in similarity mode
     }
   ]
@@ -118,9 +118,10 @@ rows: `{doi, title, year, journal}`. Latency: **~100 ms** against the 144K-paper
 |---|---|---|
 | `doi` | str | target DOI; must exist in the DB |
 
-Calls `db_sqlite.find_citing_dois(target, direction='forward')` to find every
-paper whose forward list contains `target`, then bulk-loads metadata and
-citation counts for those citers. Returns sorted by year DESC.
+Calls `db_sqlite.find_citing_dois(target, direction='reference')` to find every
+paper whose `reference` (Reference) list contains `target` — i.e. every paper
+that actually cites the target — then bulk-loads metadata and citation counts
+for those citers. Returns sorted by year DESC.
 
 Latency: **~80 ms** thanks to the `idx_cit_tgt` index on each year DB and the
 threaded scan across files.
@@ -134,7 +135,7 @@ Response:
   "papers": [
     { "doi": "...", "title": "...", "year": 2023,
       "journal": "...", "authors_count": 3,
-      "forward_count": 12, "backward_count": 45 },
+      "citation_count": 12, "reference_count": 45 },
     ...
   ]
 }
@@ -148,7 +149,7 @@ Response:
 |---|---|---|
 | `doi` | str | target DOI |
 
-Returns the metadata + counts for every DOI in the target's `backward` list
+Returns the metadata + counts for every DOI in the target's `reference` list
 that also exists in the DB. Uses `get_paper` + `get_metadata_batch` +
 `get_citation_counts`. Latency: **~40 ms**.
 
@@ -217,7 +218,7 @@ ad-hoc SQL — they handle the multi-file routing for you.
 - **New filter on the listing**: add a clause inside
   `db_sqlite.list_papers_paginated` (it already does SQL year + search +
   sort); keep the endpoint thin.
-- **New similarity mode**: pass `direction="forward"` or `"backward"` to
+- **New similarity mode**: pass `direction="citation"` or `"reference"` to
   `find_similar` for co-citation / bibliographic-coupling variants.
 - **Caching**: not currently needed for paginated reads. If you do add a
   cache, key on the full query string and keep a short TTL (60 s).

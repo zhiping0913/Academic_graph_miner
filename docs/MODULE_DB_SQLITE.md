@@ -50,7 +50,8 @@ db = load_db()  # Returns {doi: paper_data}
 paper = get_paper("10.1038/nphys2439")
 if paper:
     print(f"Title: {paper['metadata']['title']}")
-    print(f"Citations: {len(paper['backward'])}")
+    print(f"Citations (who cites this): {len(paper['citation'])}")
+    print(f"References (what this cites): {len(paper['reference'])}")
 
 # Add or update a paper
 new_paper = {
@@ -61,10 +62,10 @@ new_paper = {
         "journal": "Nature",
         "authors": ["Author1", "Author2"]
     },
-    "forward": ["10.aaaa", "10.bbbb"],
-    "backward": ["10.cccc"],
-    "classified_forward": [{"doi": "10.aaaa", "coefficient": 0.35}],
-    "classified_backward": [],
+    "citation":  ["10.aaaa", "10.bbbb"],   # who cites this paper
+    "reference": ["10.cccc"],              # what this paper cites
+    "classified_citation":  [{"doi": "10.aaaa", "coefficient": 0.35}],
+    "classified_reference": [],
     "last_updated": "2026-04-21"
 }
 upsert_paper(new_paper)
@@ -121,8 +122,13 @@ CREATE INDEX idx_cit_tgt ON citations(target_doi, direction);
 - `source_doi`: identifies the citing paper (lives in `index.db.papers.doi`).
   Cross-file foreign keys aren't enforceable in SQLite, so DOIs act as the
   logical join key.
-- `direction`: 'forward' (this paper cites the target) or 'backward'
-  (target cites this paper).
+- `direction`: enum stored on disk — `'forward'` means the row belongs to the
+  source's Citation list (the target cites the source); `'backward'` means it
+  belongs to the source's Reference list (the source cites the target).
+  **The Python API does not expose these strings**: `db_sqlite.py` translates
+  them to `'citation'` / `'reference'` at the boundary, and every other module
+  and HTTP endpoint speaks `citation` / `reference`. The legacy column values
+  are retained only to avoid migrating 13.7M rows across 156 year DBs.
 - `coefficient`: NULL for raw edges, float 0.0-1.0 for Jaccard edges.
 
 **Why split by year?**
@@ -174,8 +180,8 @@ init_db()  # Sets up schema on first run
 paper = get_paper("10.1038/nphys2439")
 if paper:
     print(f"Title: {paper['metadata']['title']}")
-    print(f"Forward cites: {paper['forward']}")
-    print(f"Backward cited by: {paper['backward']}")
+    print(f"Citation list — papers citing this: {paper['citation']}")
+    print(f"Reference list — papers this cites: {paper['reference']}")
 ```
 
 ---
@@ -217,8 +223,8 @@ for doi, paper_data in db.items():
 **Behavior**:
 1. Insert/update paper metadata (title, year, journal, authors)
 2. Clear all existing citation rows for this paper
-3. Re-insert all forward and backward citations
-4. De-duplicate: if same citation appears in both `forward` and `classified_forward`, keep classified version (with coefficient)
+3. Re-insert every entry from `citation` / `reference` (and their `classified_*` siblings)
+4. De-duplicate: if the same DOI appears in both `citation` and `classified_citation` (or `reference`/`classified_reference`), keep the classified version (the one with the coefficient)
 
 **Performance**: 10-50ms per paper
 
@@ -232,12 +238,12 @@ paper = {
         "journal": "Nature Physics",
         "authors": ["Smith J", "Jones M"]
     },
-    "forward": ["10.1234/abc", "10.5678/def"],  # Papers this cites
-    "backward": ["10.9999/xyz"],                # Papers citing this
-    "classified_forward": [
+    "citation":  ["10.1234/abc", "10.5678/def"],  # Papers citing this
+    "reference": ["10.9999/xyz"],                  # Papers this cites
+    "classified_citation": [
         {"doi": "10.1234/abc", "coefficient": 0.35}
     ],
-    "classified_backward": [],
+    "classified_reference": [],
     "last_updated": "2026-04-21"
 }
 upsert_paper(paper)
@@ -269,8 +275,8 @@ upsert_paper(paper)
 | `get_metadata(doi) -> dict \| None` | one paper, metadata only (no citation join) |
 | `get_metadata_batch(dois) -> {doi: meta_dict}` | bulk metadata fetch |
 | `search_metadata(query, limit=20)` | SQL `LIKE` on doi + title |
-| `get_citation_counts(dois) -> {doi: {forward, backward}}` | batched counts only |
-| `find_citing_dois(target, direction='forward')` | reverse lookup; parallel scan with thread pool |
+| `get_citation_counts(dois) -> {doi: {citation, reference}}` | batched counts only |
+| `find_citing_dois(target, direction='reference')` | reverse lookup: who cites target (default scans for target in others' Reference lists); parallel scan with thread pool. Pass `direction='citation'` for the inverse query. |
 | `list_available_years() -> list[str]` | year-DB files on disk |
 | `migrate_from_legacy(legacy_path=None)` | one-shot import from the legacy single-file DB |
 
@@ -339,25 +345,25 @@ Every paper returned by `get_paper()` or in `load_db()` has this structure:
         "authors": ["Smith J", "Jones M", "Lee S"]
     },
     
-    # Raw citation lists (no Jaccard coefficient)
-    "forward": [
+    # Raw lists (no Jaccard coefficient)
+    "citation": [          # papers that cite this paper (被引)
         "10.1103/PhysRevE.101.033202",
         "10.1088/1367-2630/15/1/015025",
         # ... more DOIs
     ],
-    
-    "backward": [
+
+    "reference": [         # papers this paper cites (参考文献)
         "10.1234/downstream.paper",
         # ... more DOIs
     ],
-    
+
     # Classified (with Jaccard similarity coefficient)
-    "classified_forward": [
+    "classified_citation": [
         {"doi": "10.1103/PhysRevE.101.033202", "coefficient": 0.25},
         {"doi": "10.1088/1367-2630/15/1/015025", "coefficient": 0.18},
     ],
-    
-    "classified_backward": [
+
+    "classified_reference": [
         {"doi": "10.1234/downstream.paper", "coefficient": 0.42},
     ],
     
@@ -374,22 +380,22 @@ Every paper returned by `get_paper()` or in `load_db()` has this structure:
 | `metadata.year` | int | Publication year |
 | `metadata.journal` | str | Journal name |
 | `metadata.authors` | list | Author names |
-| `forward` | list | DOIs of papers this cites (raw list) |
-| `backward` | list | DOIs of papers citing this (raw list) |
-| `classified_forward` | list of dicts | Forward cites with Jaccard coefficient |
-| `classified_backward` | list of dicts | Backward cites with Jaccard coefficient |
+| `citation` | list | DOIs of papers **citing this** — Citation list / 被引 (raw) |
+| `reference` | list | DOIs of papers **this cites** — Reference list / 参考文献 (raw) |
+| `classified_citation` | list of dicts | Subset of `citation` carrying a Jaccard coefficient (scored citers) |
+| `classified_reference` | list of dicts | Subset of `reference` carrying a Jaccard coefficient (scored refs) |
 | `last_updated` | str | When data was fetched (ISO format) |
 
 ---
 
 ### Understanding "classified" vs Raw
 
-**Raw** (`forward`, `backward`):
+**Raw** (`citation`, `reference`):
 - Simple list of DOIs
 - No coefficient (NULL in database)
-- All discovered references
+- All discovered citers / references
 
-**Classified** (`classified_forward`, `classified_backward`):
+**Classified** (`classified_citation`, `classified_reference`):
 - Subset with Jaccard similarity coefficient
 - A small fraction of all citations get coefficients (the miner only scores edges that
   cross the `THRESHOLD`); the rest are stored with NULL coefficient
@@ -403,13 +409,13 @@ Every paper returned by `get_paper()` or in `load_db()` has this structure:
 ```python
 paper = get_paper("10.1038/nphys2439")
 
-# All papers this cites
-print(len(paper['forward']))  # 45 papers
+# All papers citing this one
+print(len(paper['citation']))  # 45 papers
 
-# Only the most similar ones (with coefficient)
-print(len(paper['classified_forward']))  # 8 papers
+# Only the most similar citers (with coefficient)
+print(len(paper['classified_citation']))  # 8 papers
 
-for cite in paper['classified_forward']:
+for cite in paper['classified_citation']:
     print(f"  {cite['doi']}: Jaccard = {cite['coefficient']:.2f}")
 ```
 
@@ -454,12 +460,13 @@ for cite in paper['classified_forward']:
 
 ### Deduplication Logic (in upsert_paper)
 
-When a paper has same citation in both `forward` and `classified_forward`:
+When a paper has the same DOI in both `citation` and `classified_citation`
+(or the analogous `reference` / `classified_reference` pair):
 
 ```
 Input:
-  forward: ["10.xxxx", "10.yyyy"]
-  classified_forward: [{"doi": "10.xxxx", "coefficient": 0.35}]
+  citation: ["10.xxxx", "10.yyyy"]
+  classified_citation: [{"doi": "10.xxxx", "coefficient": 0.35}]
 
 Output:
   citations rows in {year}.db:
@@ -481,25 +488,29 @@ ref_doi = "10.1038/nphys2439"
 
 citing_papers = []
 for doi, paper in db.items():
-    if ref_doi in paper['backward']:
+    # `reference` is what each paper cites — so ref_doi being in this paper's
+    # `reference` list means this paper cites ref_doi.
+    if ref_doi in paper['reference']:
         citing_papers.append(doi)
 
 print(f"Found {len(citing_papers)} papers citing {ref_doi}")
 ```
 
-### Pattern 2: Find papers with most citations
+### Pattern 2: Find papers with most citations (most cited by others)
 
 ```python
 db = load_db()
 
+# `citation` is the Citation list (papers citing this one).  Its length is
+# how many times the paper has been cited.
 papers_by_citations = sorted(
     db.items(),
-    key=lambda x: len(x[1]['backward']),
+    key=lambda x: len(x[1]['citation']),
     reverse=True
 )
 
 for doi, paper in papers_by_citations[:10]:
-    print(f"{paper['metadata']['title']}: {len(paper['backward'])} citations")
+    print(f"{paper['metadata']['title']}: {len(paper['citation'])} citations")
 ```
 
 ### Pattern 3: Export database to JSON

@@ -79,7 +79,8 @@ index.db / papers 表:
 {year}.db / citations 表:
   source_doi   TEXT
   target_doi   TEXT
-  direction    TEXT (forward/backward)
+  direction    TEXT ('forward' = Citation list / 被引; 'backward' = Reference list / 参考文献)
+                    -- 公开 API 用 citation/reference；磁盘列值保留旧名，映射发生在 db_sqlite.py
   coefficient  REAL (Jaccard or NULL)
   PRIMARY KEY: (source_doi, target_doi, direction)
   索引: idx_cit_src(source_doi, direction)
@@ -99,7 +100,7 @@ list_papers_paginated(...)      # SQL LIMIT/OFFSET 分页列表（UI 用）
 get_metadata(doi)               # 仅元数据查询
 get_metadata_batch(dois)        # 批量元数据
 search_metadata(query)          # 标题 / DOI 模糊搜索
-get_citation_counts(dois)       # 批量 forward/backward 计数
+get_citation_counts(dois)       # 批量 citation/reference 计数
 find_citing_dois(target_doi)    # 反向查询：谁引用了 X
 list_available_years()          # 磁盘上的年份 DB 列表
 migrate_from_legacy(path)       # 从单文件迁移
@@ -116,12 +117,12 @@ is_expired(ts, days)            # 检查缓存有效期
         "journal": "Nature Physics",
         "authors": ["Author1", "Author2"]
     },
-    "forward": ["10.aaaa", "10.bbbb"],           # 该论文引用的DOI
-    "backward": ["10.cccc"],                    # 引用该论文的DOI
-    "classified_forward": [                     # 有Jaccard系数的
+    "citation":  ["10.aaaa", "10.bbbb"],         # 引用该论文的 DOI（被引）
+    "reference": ["10.cccc"],                    # 该论文引用的 DOI（参考文献）
+    "classified_citation": [                     # 有 Jaccard 系数的
         {"doi": "10.aaaa", "coefficient": 0.25}
     ],
-    "classified_backward": [
+    "classified_reference": [
         {"doi": "10.cccc", "coefficient": 0.15}
     ],
     "last_updated": "2026-04-21"
@@ -137,7 +138,7 @@ is_expired(ts, days)            # 检查缓存有效期
 1. 初始化队列 ← seed DOIs
 2. 对每个论文：
    ├─ 调用S2/Crossref API获取元数据
-   ├─ 提取forward和backward引用列表
+   ├─ 提取 citation（被引）和 reference（参考文献）列表
    ├─ 计算与队列中论文的Jaccard相似度
    ├─ 若相似度 >= THRESHOLD → 加入队列进行深层挖掘
    └─ 保存到SQLite
@@ -223,7 +224,7 @@ calculate_jaccard(list_a: List, list_b: List) -> float
     # 计算Jaccard相似度: |A∩B| / |A∪B|
     # 范围: 0.0 - 1.0
 
-extract_subgraph(db, seeds, max_forward_dist, max_backward_dist) -> nx.DiGraph
+extract_subgraph(db, seeds, max_citation_dist, max_reference_dist) -> nx.DiGraph
     # 提取种子论文周围的子图
     # 返回: NetworkX有向图，含节点属性和边权重
 
@@ -242,8 +243,8 @@ POST /api/graph
   请求:
     {
       "seed_dois": ["10.1038/nphys2439", ...],
-      "max_forward_dist": 1,
-      "max_backward_dist": 1,
+      "max_citation_dist": 1,
+      "max_reference_dist": 1,
       "include_metadata": true
     }
   响应:
@@ -283,7 +284,7 @@ GET /api/citing-papers?doi=…
   反向查询：谁引用了 doi（用 find_citing_dois 并行扫所有年份 DB，~80ms）
 
 GET /api/reference-papers?doi=…
-  目标论文自身的 backward 引用列表 + 批量元数据
+  目标论文自身的 reference（参考文献）列表 + 批量元数据
 
 GET /api/search-papers?search=…
   自动补全（SQL LIKE，~100ms）
@@ -325,7 +326,7 @@ GET /api/download-report/<task_id>
 
 **支持格式**:
 - **JSON**: 完整的论文对象（含所有引用关系）
-- **CSV**: 表格形式（DOI, 标题, 年份, 作者, forward引用, backward引用）
+- **CSV**: 表格形式（DOI, 标题, 年份, 作者, citations 列表, references 列表）
 - **TXT**: 纯文本列表或详细格式
 
 **关键函数**:
@@ -444,15 +445,15 @@ db = load_db()  # Dict[str, paper_data]
 paper = get_paper("10.1038/nphys2439")
 if paper:
     print(paper["metadata"]["title"])
-    print(f"前向引用: {len(paper['forward'])}")
-    print(f"有系数引用: {len(paper['classified_forward'])}")
+    print(f"被引数 (Citation): {len(paper['citation'])}")
+    print(f"有系数被引: {len(paper['classified_citation'])}")
 
 # 更新论文
 new_paper = {
     "doi": "10.xxxxx",
     "metadata": {"title": "...", "year": 2021, ...},
-    "forward": [...],
-    "backward": [...]
+    "citation": [...],
+    "reference": [...]
 }
 upsert_paper(new_paper)
 ```
@@ -472,8 +473,8 @@ similarity = calculate_jaccard(
 G = extract_subgraph(
     db=db,
     seed_dois=["10.1038/nphys2439"],
-    max_forward_dist=1,
-    max_backward_dist=1
+    max_citation_dist=1,
+    max_reference_dist=1
 )
 # 返回 NetworkX DiGraph
 print(f"节点: {G.number_of_nodes()}")

@@ -154,7 +154,9 @@ def fetch_combined_data(doi):
     - 引用关系：S2 + Crossref + OpenCitations
     """
     doi = doi.lower().strip()
-    f_set, b_set = set(), set()
+    # citation_set = papers citing this DOI (Citation list, incoming).
+    # reference_set = papers this DOI cites (Reference list, outgoing).
+    citation_set, reference_set = set(), set()
     metadata = {}
 
     # --- 1. 获取原始响应 ---
@@ -189,7 +191,7 @@ def fetch_combined_data(doi):
     # --- 3. 引用数据全量合并（严格防错） ---
     
     # 从 S2 提取
-    # 处理 Citations (Forward)
+    # Citation list — 谁引用了这篇论文
     s2_citations = s2_data.get('citations')
     if isinstance(s2_citations, list):
         for cit in s2_citations:
@@ -198,9 +200,9 @@ def fetch_combined_data(doi):
                 ext_ids = cit.get('externalIds')
                 if isinstance(ext_ids, dict):
                     c_doi = ext_ids.get('DOI')
-                    if c_doi: f_set.add(c_doi.lower())
+                    if c_doi: citation_set.add(c_doi.lower())
 
-    # 处理 References (Backward)
+    # Reference list — 这篇论文引用了谁
     s2_refs = s2_data.get('references')
     if isinstance(s2_refs, list):
         for ref in s2_refs:
@@ -208,41 +210,41 @@ def fetch_combined_data(doi):
                 ext_ids = ref.get('externalIds')
                 if isinstance(ext_ids, dict):
                     r_doi = ext_ids.get('DOI')
-                    if r_doi: b_set.add(r_doi.lower())
+                    if r_doi: reference_set.add(r_doi.lower())
 
-    # 从 Crossref 提取 (Backward)
+    # 从 Crossref 提取 (Reference)
     cr_refs = cr_data.get('reference')
     if isinstance(cr_refs, list):
         for r in cr_refs:
             if isinstance(r, dict):
                 r_doi = r.get('DOI')
-                if r_doi: b_set.add(r_doi.lower())
+                if r_doi: reference_set.add(r_doi.lower())
 
     # 从 OpenCitations 提取
-    # Citations: 谁引用了这篇论文 (Forward)
+    # Citation: 谁引用了这篇论文
     oc_citations = oc_data.get('citations', [])
     if isinstance(oc_citations, list):
         for citing_doi in oc_citations:
             if citing_doi:
-                f_set.add(citing_doi.lower())
+                citation_set.add(citing_doi.lower())
 
-    # References: 这篇论文引用了谁 (Backward)
+    # Reference: 这篇论文引用了谁
     oc_refs = oc_data.get('references', [])
     if isinstance(oc_refs, list):
         for cited_doi in oc_refs:
             if cited_doi:
-                b_set.add(cited_doi.lower())
+                reference_set.add(cited_doi.lower())
 
 
     # --- 4. 有效性检查 ---
-    if not metadata.get('title') and not b_set and not f_set:
+    if not metadata.get('title') and not reference_set and not citation_set:
         return None
 
     return {
         "doi": doi,
         "metadata": metadata,
-        "forward": list(f_set),
-        "backward": list(b_set),
+        "citation": list(citation_set),
+        "reference": list(reference_set),
         "last_updated": datetime.now().strftime("%Y-%m-%d")
     }
 
@@ -278,10 +280,10 @@ def run_miner(seeds,force_update=False):
             continue
 
         # 处理邻居并计算相似度
-        for key in ["forward", "backward"]:
+        for key in ["citation", "reference"]:
             classified_key = f"classified_{key}"
             db[curr_doi][classified_key] = []
-            
+
             neighbor_list = curr_data.get(key, [])
             print(f"  分析 {key} 邻居 (共 {len(neighbor_list)} 篇)...")
 
@@ -295,11 +297,11 @@ def run_miner(seeds,force_update=False):
                         db[n_doi] = n_data
                         upsert_paper(n_data)
                         time.sleep(REQUEST_DELAY)
-                
+
                 if not n_data: continue
 
-                # 计算相似度系数
-                coeff = calculate_jaccard(curr_data['backward'], n_data['backward'])
+                # 计算相似度系数：用 reference list（参考文献集合）做 Jaccard
+                coeff = calculate_jaccard(curr_data['reference'], n_data['reference'])
                 db[curr_doi][classified_key].append({"doi": n_doi, "coefficient": coeff})
 
                 # 阈值判断

@@ -123,16 +123,16 @@ print(f"Mined {len(db)} papers")
 **Purpose**: Fetch complete paper metadata from three API sources and merge results
 
 **Implementation** (Triple-source fusion):
-1. **Semantic Scholar API**: Title, authors, year, citations (forward), references (backward)
-2. **Crossref API**: Journal info, DOI validation, references (backward)
-3. **OpenCitations API**: Comprehensive citation coverage (forward & backward)
+1. **Semantic Scholar API**: title, authors, year, citations (→ `citation`), references (→ `reference`)
+2. **Crossref API**: journal info, DOI validation, references (→ `reference`)
+3. **OpenCitations API**: full coverage of both directions
 
 **Data Merge Strategy**:
 - **Metadata Priority**: S2 > Crossref (title, authors, year, journal)
-- **Forward (被引信息 - who cites this paper)**:
-  - Combines: S2 citations + OpenCitations citations
-- **Backward (参考文献 - what this paper cites)**:
-  - Combines: S2 references + Crossref references + OpenCitations references
+- **`citation` (被引 — who cites this paper)**:
+  - Combines: S2 `citations` + OpenCitations `/citations/`
+- **`reference` (参考文献 — what this paper cites)**:
+  - Combines: S2 `references` + Crossref `reference` + OpenCitations `/references/`
 - **Deduplication**: Automatic via set operations across sources
 
 **Parameters**:
@@ -148,8 +148,8 @@ print(f"Mined {len(db)} papers")
         "year": 2012,
         "journal": "Nature Physics"
     },
-    "forward": ["10.xxx/yyy", "10.aaa/bbb"],   # Who cites this paper (Citations)
-    "backward": ["10.ccc/ddd"],                 # What this paper cites (References)
+    "citation":  ["10.xxx/yyy", "10.aaa/bbb"],   # Who cites this paper
+    "reference": ["10.ccc/ddd"],                  # What this paper cites
     "last_updated": "2026-04-21"
 }
 ```
@@ -160,12 +160,12 @@ print(f"Mined {len(db)} papers")
    - Field: citations.externalIds.DOI, references.externalIds.DOI
 
 2. **Crossref** (`api.crossref.org`)
-   - Provides backward references only
+   - Provides `reference`-direction edges only
    - Field: reference[].DOI
 
 3. **OpenCitations** (`opencitations.net`)
-   - Provides forward & backward
-   - Endpoints: /citations/ (citing), /references/ (cited)
+   - Provides both directions
+   - Endpoints: /citations/ (→ `citation`), /references/ (→ `reference`)
 
 **Performance**: 3-6 seconds per paper (3 API calls with 1.2s delays)
 
@@ -255,7 +255,7 @@ STOP: MAX_DEPTH reached
 
 **Returns**:
 - Paper metadata
-- Citation list (forward/backward)
+- Citation lists (`citation` and `reference`)
 - Author information
 
 ---
@@ -376,10 +376,12 @@ from db_sqlite import load_db
 
 db = load_db()
 
-# Find papers with most citations
+# Find papers with most citations (most cited by others).
+# `citation` is the Citation list (papers citing this), so its length is the
+# citation count.
 most_cited = sorted(
     db.items(),
-    key=lambda x: len(x[1]['backward']),
+    key=lambda x: len(x[1]['citation']),
     reverse=True
 )[:5]
 

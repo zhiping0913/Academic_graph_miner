@@ -38,21 +38,21 @@ DEFAULT_YEAR = datetime.now().year   # 2026 right now; auto-adjusts
 
 
 def _build_listing_items(meta_rows: list[dict]) -> list[dict]:
-    """Add forward/backward counts to a page of metadata rows."""
+    """Add citation/reference counts to a page of metadata rows."""
     dois = [m["doi"] for m in meta_rows]
     counts = get_citation_counts(dois) if dois else {}
     items = []
     for m in meta_rows:
         meta = m["metadata"]
-        c = counts.get(m["doi"], {"forward": 0, "backward": 0})
+        c = counts.get(m["doi"], {"citation": 0, "reference": 0})
         items.append({
             "doi": m["doi"],
             "title": meta.get("title", "N/A"),
             "year": meta.get("year"),
             "journal": meta.get("journal", ""),
             "authors_count": len(meta.get("authors", [])),
-            "forward_count": c["forward"],
-            "backward_count": c["backward"],
+            "citation_count": c["citation"],
+            "reference_count": c["reference"],
         })
     return items
 
@@ -117,8 +117,8 @@ def get_papers_list():
                     "year": h["year"],
                     "journal": h["journal"] or "",
                     "authors_count": 0,           # not loaded in similarity path
-                    "forward_count": h["citation_count"],
-                    "backward_count": 0,
+                    "citation_count": h["citation_count"],
+                    "reference_count": 0,
                     "similarity": h["similarity"],
                 })
 
@@ -209,7 +209,8 @@ def get_citing_papers():
         if get_metadata(target_doi) is None:
             return jsonify({'status': 'error', 'message': '论文不存在'}), 404
 
-        citer_dois = find_citing_dois(target_doi, direction='forward')
+        # Citers of target = papers that have target in their reference list.
+        citer_dois = find_citing_dois(target_doi, direction='reference')
         if not citer_dois:
             return jsonify({'status': 'success', 'papers': [], 'total': 0})
 
@@ -218,15 +219,15 @@ def get_citing_papers():
         papers = []
         for doi in citer_dois:
             m = meta.get(doi, {}).get('metadata', {})
-            c = counts.get(doi, {'forward': 0, 'backward': 0})
+            c = counts.get(doi, {'citation': 0, 'reference': 0})
             papers.append({
                 'doi': doi,
                 'title': m.get('title', 'N/A'),
                 'year': m.get('year'),
                 'journal': m.get('journal', ''),
                 'authors_count': len(m.get('authors', [])),
-                'forward_count': c['forward'],
-                'backward_count': c['backward'],
+                'citation_count': c['citation'],
+                'reference_count': c['reference'],
             })
         papers.sort(key=lambda x: (-(x['year'] or 0), x['title']))
         return jsonify({'status': 'success', 'papers': papers, 'total': len(papers)})
@@ -249,7 +250,7 @@ def get_reference_papers():
         if target_paper is None:
             return jsonify({'status': 'error', 'message': '论文不存在'}), 404
 
-        ref_dois = target_paper.get('backward', [])
+        ref_dois = target_paper.get('reference', [])
         if not ref_dois:
             return jsonify({'status': 'success', 'papers': [], 'total': 0})
 
@@ -261,15 +262,15 @@ def get_reference_papers():
         papers = []
         for doi in existing:
             m = meta[doi]['metadata']
-            c = counts.get(doi, {'forward': 0, 'backward': 0})
+            c = counts.get(doi, {'citation': 0, 'reference': 0})
             papers.append({
                 'doi': doi,
                 'title': m.get('title', 'N/A'),
                 'year': m.get('year'),
                 'journal': m.get('journal', ''),
                 'authors_count': len(m.get('authors', [])),
-                'forward_count': c['forward'],
-                'backward_count': c['backward'],
+                'citation_count': c['citation'],
+                'reference_count': c['reference'],
             })
         papers.sort(key=lambda x: (-(x['year'] or 0), x['title']))
         return jsonify({'status': 'success', 'papers': papers, 'total': len(papers)})

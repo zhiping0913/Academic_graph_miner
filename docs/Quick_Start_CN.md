@@ -104,7 +104,7 @@ DOI 可以从 arXiv、Semantic Scholar、Crossref 获取。
 
 ## 5. 引用网络挖掘 `fitch_citations.py`
 
-从种子出发，逐层抓取 forward（参考文献）和 backward（被引）列表，用 Jaccard 相似度筛选下一轮的邻居。
+从种子出发，逐层抓取 citation（被引：谁引用了它）和 reference（参考文献：它引用了谁）列表，用 Jaccard 相似度筛选下一轮的邻居。
 
 ```bash
 # 从文件读 DOI
@@ -156,7 +156,7 @@ python similarity_search.py 10.1016/j.cnsns.2026.109994 --output title
 |---|---|---|
 | `--year-min` / `--year-max` | 不限 | 候选论文年份区间（含端点） |
 | `--top` | 50 | 返回条数 |
-| `--direction` | `both` | `forward` / `backward` / `both` |
+| `--direction` | `both` | `citation` / `reference` / `both` |
 | `--workers` | min(cpu, 8) | 并行进程数 |
 | `--include-unknown` | 否 | 是否同时扫 `unknown.db` |
 
@@ -193,7 +193,7 @@ for h in hits:
 - 首次打开默认只加载**当前年**（实测 ~20 ms），翻页是 SQL 分页，不再一次性加载全库。
 - 在「参考论文」里填一个 DOI 后，会自动调用 `similarity_search.find_similar` 做全库相似度排序（~3 s）。
 - 自动补全搜索框走 SQL `LIKE`，毫秒级。
-- 「Citing」「Reference」按钮分别查的是 backward / forward 列表。
+- 「Citation」「Reference」按钮分别查的是 citation（被引）/ reference（参考文献）列表。
 
 ---
 
@@ -312,7 +312,7 @@ A：调高 `fitch_citations.py` 里的 `REQUEST_DELAY`（默认 1.2 秒）。
 
 ```python
 from db_sqlite import find_citing_dois
-citers = find_citing_dois("10.1038/nphys2439", direction="forward")
+citers = find_citing_dois("10.1038/nphys2439")  # 默认 direction='reference'
 ```
 
 或者在 data_browser 网页里点 "Citing"。

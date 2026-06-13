@@ -24,8 +24,8 @@ def api_graph():
     body = request.get_json(force=True)
     raw_dois = body.get('seed_dois', [])
     seed_dois = [d.strip().lower() for d in raw_dois if d.strip()]
-    max_forward_dist = min(int(body.get('max_forward_dist', 1)), 5)
-    max_backward_dist = min(int(body.get('max_backward_dist', 1)), 5)
+    max_citation_dist = min(int(body.get('max_citation_dist', 1)), 5)
+    max_reference_dist = min(int(body.get('max_reference_dist', 1)), 5)
 
     if not seed_dois:
         return jsonify({'error': '请至少提供一个 DOI'}), 400
@@ -36,7 +36,7 @@ def api_graph():
     if missing:
         return jsonify({'error': f'以下 DOI 不在数据库中: {", ".join(missing)}'}), 404
 
-    G = extract_subgraph(db, seed_dois, max_forward_dist, max_backward_dist)
+    G = extract_subgraph(db, seed_dois, max_citation_dist, max_reference_dist)
 
     nodes = []
     for node_doi, attrs in G.nodes(data=True):

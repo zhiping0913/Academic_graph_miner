@@ -14,7 +14,7 @@ Usage as a library
         seed_doi="10.1063/5.0303752",
         year_min=2020, year_max=2026,
         top_n=50,
-        direction="both",     # forward | backward | both
+        direction="both",     # citation | reference | both
     )
     for h in hits:
         print(h["similarity"], h["doi"], h["title"])
@@ -22,7 +22,7 @@ Usage as a library
 CLI
 ---
     python similarity_search.py SEED_DOI [--year-min Y] [--year-max Y]
-        [--top N] [--direction forward|backward|both]
+        [--top N] [--direction citation|reference|both]
         [--workers N] [--output FIELDS] [--header]
 
     --output: comma-separated field list. Valid: doi, year, title, journal,
@@ -44,6 +44,7 @@ from db_sqlite import (
     _connect_index,
     _year_db_path,
     _year_key,
+    _KEY_TO_DB_DIR,
     get_paper,
     get_metadata_batch,
 )
@@ -98,10 +99,10 @@ def _score_year(args: tuple) -> list[tuple[float, str, int]]:
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
-        if direction in ("forward", "backward"):
+        if direction in _KEY_TO_DB_DIR:
             rows = conn.execute(
                 "SELECT source_doi, target_doi FROM citations WHERE direction=?",
-                (direction,),
+                (_KEY_TO_DB_DIR[direction],),
             ).fetchall()
         else:
             rows = conn.execute(
@@ -157,7 +158,7 @@ def find_similar(seed_doi: str,
     workers
         Worker process count. Default: min(cpu_count, 8).
     direction
-        "forward", "backward", or "both" — which citation lists to compare.
+        "citation", "reference", or "both" — which neighbor list to compare.
     include_unknown
         If True, also scan unknown.db for unknown-year candidates.
 
@@ -165,19 +166,19 @@ def find_similar(seed_doi: str,
     -------
     list[dict] with keys: doi, year, title, journal, similarity, citation_count.
     """
-    if direction not in ("forward", "backward", "both"):
-        raise ValueError("direction must be 'forward', 'backward', or 'both'")
+    if direction not in ("citation", "reference", "both"):
+        raise ValueError("direction must be 'citation', 'reference', or 'both'")
 
     seed = get_paper(seed_doi)
     if seed is None:
         raise ValueError(f"Seed DOI not found in DB: {seed_doi}")
 
-    if direction == "forward":
-        seed_cits = set(seed["forward"])
-    elif direction == "backward":
-        seed_cits = set(seed["backward"])
+    if direction == "citation":
+        seed_cits = set(seed["citation"])
+    elif direction == "reference":
+        seed_cits = set(seed["reference"])
     else:
-        seed_cits = set(seed["forward"]) | set(seed["backward"])
+        seed_cits = set(seed["citation"]) | set(seed["reference"])
 
     if not seed_cits:
         return []
@@ -251,9 +252,9 @@ def _cli() -> int:
                    help="Maximum candidate year (inclusive).")
     p.add_argument("--top", type=int, default=50,
                    help="Number of results to print (default 50).")
-    p.add_argument("--direction", choices=("forward", "backward", "both"),
+    p.add_argument("--direction", choices=("citation", "reference", "both"),
                    default="both",
-                   help="Citation list to compare (default both).")
+                   help="Neighbor list to compare (default both).")
     p.add_argument("--workers", type=int, default=None,
                    help="Parallel worker processes (default: min(cpu_count, 8)).")
     p.add_argument("--include-unknown", action="store_true",
