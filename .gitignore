@@ -24,6 +24,7 @@ build/
 *.sqlite
 *.sqlite3
 academic_knowledge_graph.db
+database/
 downloaded_papers/
 papers/
 
