@@ -37,7 +37,9 @@ def fetch_semanticscholar(doi):
         dict: 包含标题、年份、作者、引用关系的数据
               返回空字典表示请求失败
     """
-    s2_fields = 'title,year,venue,authors,citations.externalIds,references.externalIds'
+    # externalIds is requested so we can verify S2 returned the paper we asked
+    # for — S2 sometimes resolves partial / malformed DOIs to an unrelated paper.
+    s2_fields = 'title,year,venue,authors,externalIds,citations.externalIds,references.externalIds'
     try:
         s2_res = requests.get(
             f"{S2_API_URL}{doi}",
@@ -51,6 +53,81 @@ def fetch_semanticscholar(doi):
         print(f"  [S2 异常] {doi}: {e}")
 
     return {}
+
+
+def _normalize_doi(doi: str) -> str:
+    """Strip common prefixes and whitespace; lower-case. Used only for
+    cross-checking — we never write a normalized DOI back to disk."""
+    if not doi:
+        return ""
+    s = doi.strip().lower()
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi.org/", "doi:"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    return s
+
+
+# Heuristic: a real DOI suffix (part after the first "/") is almost never
+# shorter than this. CNKI examples are 30+ chars; even the shortest legitimate
+# DOIs (some patent registries) have 5+ char suffixes. We use a conservative
+# floor so that obviously malformed DOIs S2 happens to have cached — e.g.
+# `10.3969/J` — also get filtered out.
+_MIN_DOI_SUFFIX_LEN = 3
+
+
+def _doi_looks_well_formed(doi: str) -> bool:
+    """Cheap structural sanity check on a DOI string. Lower-bound only —
+    designed to reject obvious garbage, not to validate against the DOI spec."""
+    s = _normalize_doi(doi)
+    if not s.startswith("10."):
+        return False
+    parts = s.split("/", 1)
+    if len(parts) != 2:
+        return False
+    registrant, suffix = parts
+    if "." not in registrant[3:] and not registrant[3:].isdigit():
+        # registrant after "10." should look like a number (with optional dots)
+        return False
+    if len(suffix) < _MIN_DOI_SUFFIX_LEN:
+        return False
+    return True
+
+
+def _verify_s2_doi(s2_data: dict, requested_doi: str) -> dict:
+    """Guard against S2 returning data for a paper we didn't actually ask for.
+
+    Two failure modes are caught:
+
+    1. **Fuzzy resolution.** When given a partial / malformed DOI, S2 will
+       sometimes resolve it to an unrelated paper and hand back that paper's
+       metadata + citations. We compare the DOI S2 reports under
+       ``externalIds.DOI`` with the DOI we actually asked for; on mismatch (or
+       if S2 carries no DOI at all in its externalIds) we discard the payload.
+
+    2. **Polluted records.** S2 may have indexed a paper *under* a malformed
+       DOI (e.g. ``10.3969/J``). In that case the DOI in ``externalIds.DOI``
+       matches our request but is itself nonsense. We additionally require the
+       returned DOI to look well-formed (see ``_doi_looks_well_formed``).
+
+    Returns the original dict on success, or an empty dict on rejection.
+    """
+    if not s2_data:
+        return s2_data
+    ext = s2_data.get("externalIds") or {}
+    s2_doi = ext.get("DOI") if isinstance(ext, dict) else None
+    want = _normalize_doi(requested_doi)
+    got = _normalize_doi(s2_doi or "")
+    if not got:
+        print(f"  [S2 DOI 缺失] requested {requested_doi!r}, S2 has no externalIds.DOI — 丢弃")
+        return {}
+    if got != want:
+        print(f"  [S2 DOI 不匹配] requested {requested_doi!r}, got {s2_doi!r} — 丢弃")
+        return {}
+    if not _doi_looks_well_formed(got):
+        print(f"  [S2 DOI 形态异常] {s2_doi!r} (suffix 过短 / 结构不合理) — 丢弃")
+        return {}
+    return s2_data
 
 
 def fetch_crossref(doi):
@@ -161,6 +238,7 @@ def fetch_combined_data(doi):
 
     # --- 1. 获取原始响应 ---
     s2_data = fetch_semanticscholar(doi)
+    s2_data = _verify_s2_doi(s2_data, doi)
     time.sleep(REQUEST_DELAY)
     cr_data = fetch_crossref(doi)
     time.sleep(REQUEST_DELAY)
