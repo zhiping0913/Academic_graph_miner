@@ -3,7 +3,9 @@ import time
 import requests
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from requests.adapters import HTTPAdapter
 
 from db_sqlite import load_db, upsert_paper, get_paper, is_expired
 
@@ -17,13 +19,24 @@ OC_REFERENCES_URL = "https://opencitations.net/index/coci/api/v1/references/"
 THRESHOLD = 0.1          # Jaccard 相似度阈值
 MAX_DEPTH = 2            # 最大探索深度
 UPDATE_DAYS = 1000         # 数据更新周期天数
-REQUEST_DELAY = 1.2      # API 限制间隔
+REQUEST_DELAY = 1.2      # 每篇论文写库后的礼貌延迟（在 BFS 串行段使用；
+                         # API fan-out 改并行后，调用之间的 sleep 已删除）
+BFS_WORKERS = 8          # 并发抓取邻居论文的线程数
 
 # 模拟浏览器 Headers，防止被部分 API 节点拦截
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json'
 }
+
+# 复用 TCP/TLS 连接：3 个 API 域名的连接池在线程间共享。
+# requests.Session 内部以 urllib3 的连接池实现，多线程使用相同 session
+# 做不同请求是安全的。
+_SESSION = requests.Session()
+_SESSION.headers.update(HEADERS)
+_ADAPTER = HTTPAdapter(pool_connections=32, pool_maxsize=64, max_retries=0)
+_SESSION.mount("https://", _ADAPTER)
+_SESSION.mount("http://", _ADAPTER)
 
 
 def fetch_semanticscholar(doi):
@@ -41,11 +54,10 @@ def fetch_semanticscholar(doi):
     # for — S2 sometimes resolves partial / malformed DOIs to an unrelated paper.
     s2_fields = 'title,year,venue,authors,externalIds,citations.externalIds,references.externalIds'
     try:
-        s2_res = requests.get(
+        s2_res = _SESSION.get(
             f"{S2_API_URL}{doi}",
             params={'fields': s2_fields},
-            headers=HEADERS,
-            timeout=15
+            timeout=15,
         )
         if s2_res.status_code == 200:
             return s2_res.json() or {}
@@ -142,11 +154,7 @@ def fetch_crossref(doi):
               返回空字典表示请求失败
     """
     try:
-        cr_res = requests.get(
-            f"{CR_API_URL}{doi}",
-            headers=HEADERS,
-            timeout=15
-        )
+        cr_res = _SESSION.get(f"{CR_API_URL}{doi}", timeout=15)
         if cr_res.status_code == 200:
             return cr_res.json().get('message') or {}
     except Exception as e:
@@ -170,52 +178,30 @@ def fetch_opencitations(doi):
               }
               返回空字典表示请求失败
     """
-    result = {
-        'citations': [],      # 谁引用了这篇论文 (cited方的citing字段)
-        'references': []      # 这篇论文引用了谁 (citing方的cited字段)
-    }
+    def _fetch(url: str, sub_key: str, label: str) -> list:
+        out: list = []
+        try:
+            r = _SESSION.get(f"{url}{doi}", timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict):
+                            d = item.get(sub_key)
+                            if d:
+                                out.append(d.lower())
+        except Exception as e:
+            print(f"  [OpenCitations {label} 异常] {doi}: {e}")
+        return out
 
-    # 获取被引 (Citations): 谁引用了这篇论文
-    try:
-        citations_res = requests.get(
-            f"{OC_CITATIONS_URL}{doi}",
-            headers=HEADERS,
-            timeout=15
-        )
-        if citations_res.status_code == 200:
-            citations_data = citations_res.json()
-            if isinstance(citations_data, list):
-                # 提取 "citing" 字段 (谁引用了这篇论文)
-                for item in citations_data:
-                    if isinstance(item, dict):
-                        citing_doi = item.get('citing')
-                        if citing_doi:
-                            result['citations'].append(citing_doi.lower())
-    except Exception as e:
-        print(f"  [OpenCitations 被引异常] {doi}: {e}")
+    # 两个端点彼此独立，并发抓取（取代原先的 0.6s sleep + 串行）。
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f_cit = pool.submit(_fetch, OC_CITATIONS_URL, 'citing', '被引')
+        f_ref = pool.submit(_fetch, OC_REFERENCES_URL, 'cited', '引用')
+        citations = f_cit.result()
+        references = f_ref.result()
 
-    time.sleep(REQUEST_DELAY / 2)  # 较小的延迟
-
-    # 获取引用 (References): 这篇论文引用了谁
-    try:
-        references_res = requests.get(
-            f"{OC_REFERENCES_URL}{doi}",
-            headers=HEADERS,
-            timeout=15
-        )
-        if references_res.status_code == 200:
-            references_data = references_res.json()
-            if isinstance(references_data, list):
-                # 提取 "cited" 字段 (这篇论文引用了谁)
-                for item in references_data:
-                    if isinstance(item, dict):
-                        cited_doi = item.get('cited')
-                        if cited_doi:
-                            result['references'].append(cited_doi.lower())
-    except Exception as e:
-        print(f"  [OpenCitations 引用异常] {doi}: {e}")
-
-    return result
+    return {'citations': citations, 'references': references}
 
 
 
@@ -236,13 +222,15 @@ def fetch_combined_data(doi):
     citation_set, reference_set = set(), set()
     metadata = {}
 
-    # --- 1. 获取原始响应 ---
-    s2_data = fetch_semanticscholar(doi)
+    # --- 1. 获取原始响应（三家 API 并行）---
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_s2 = pool.submit(fetch_semanticscholar, doi)
+        f_cr = pool.submit(fetch_crossref, doi)
+        f_oc = pool.submit(fetch_opencitations, doi)
+        s2_data = f_s2.result()
+        cr_data = f_cr.result()
+        oc_data = f_oc.result()
     s2_data = _verify_s2_doi(s2_data, doi)
-    time.sleep(REQUEST_DELAY)
-    cr_data = fetch_crossref(doi)
-    time.sleep(REQUEST_DELAY)
-    oc_data = fetch_opencitations(doi)
 
 
 # --- 2. 元数据融合 ---
@@ -358,35 +346,56 @@ def run_miner(seeds,force_update=False):
             continue
 
         # 处理邻居并计算相似度
-        for key in ["citation", "reference"]:
-            classified_key = f"classified_{key}"
-            db[curr_doi][classified_key] = []
+        # 1) 把 citation + reference 合并为去重的邻居集合，避免重复抓取。
+        citation_list = curr_data.get("citation", []) or []
+        reference_list = curr_data.get("reference", []) or []
+        citation_set = set(citation_list)
+        reference_set = set(reference_list)
+        unique_neighbors = sorted(citation_set | reference_set)
+        overlap = len(citation_set & reference_set)
+        print(f"  邻居统计: citation={len(citation_set)}, reference={len(reference_set)},"
+              f" 去重后 unique={len(unique_neighbors)} (overlap={overlap})")
 
-            neighbor_list = curr_data.get(key, [])
-            print(f"  分析 {key} 邻居 (共 {len(neighbor_list)} 篇)...")
+        # 2) 划分：哪些命中本地缓存、哪些需要新拉
+        fetched: dict = {}
+        to_fetch: list[str] = []
+        for n_doi in unique_neighbors:
+            if (n_doi in db and not is_expired(db[n_doi].get('last_updated'))
+                    and not force_update):
+                fetched[n_doi] = db[n_doi]
+            else:
+                to_fetch.append(n_doi)
 
-            for n_doi in neighbor_list:
-                # 预获取邻居信息以计算 Jaccard
-                if n_doi in db and not is_expired(db[n_doi].get('last_updated')) and not force_update:
-                    n_data = db[n_doi]
-                else:
-                    n_data = fetch_combined_data(n_doi)
-                    if n_data:
-                        db[n_doi] = n_data
-                        upsert_paper(n_data)
-                        time.sleep(REQUEST_DELAY)
+        # 3) 并发抓取 cache-miss 的邻居（每个 fetch_combined_data 内部还会
+        #    把三个 API 并行起来；外层并发 + 内层并发 = peak 24 个 HTTP 在飞）。
+        if to_fetch:
+            print(f"  并发抓取 {len(to_fetch)} 篇 (workers={BFS_WORKERS})...")
+            with ThreadPoolExecutor(max_workers=BFS_WORKERS) as pool:
+                results = list(pool.map(fetch_combined_data, to_fetch))
+            # 在主线程串行写库，避免对 SQLite 并发写产生不必要的锁竞争
+            for n_doi, n_data in zip(to_fetch, results):
+                if n_data:
+                    fetched[n_doi] = n_data
+                    db[n_doi] = n_data
+                    upsert_paper(n_data)
 
-                if not n_data: continue
-
-                # 计算相似度系数：用 reference list（参考文献集合）做 Jaccard
-                coeff = calculate_jaccard(curr_data['reference'], n_data['reference'])
-                db[curr_doi][classified_key].append({"doi": n_doi, "coefficient": coeff})
-
-                # 阈值判断
-                if coeff >= THRESHOLD and n_doi not in processed_session:
-                    if not any(q[0] == n_doi for q in queue):
-                        print(f"    找到高相关邻居: {n_doi} (Sim: {coeff})")
-                        queue.append((n_doi, depth + 1))
+        # 4) 计算 Jaccard、写 classified_*、按阈值入队（串行段，需要触动队列状态）
+        db[curr_doi]["classified_citation"] = []
+        db[curr_doi]["classified_reference"] = []
+        for n_doi in unique_neighbors:
+            n_data = fetched.get(n_doi)
+            if not n_data:
+                continue
+            coeff = calculate_jaccard(curr_data["reference"], n_data["reference"])
+            entry = {"doi": n_doi, "coefficient": coeff}
+            if n_doi in citation_set:
+                db[curr_doi]["classified_citation"].append(entry)
+            if n_doi in reference_set:
+                db[curr_doi]["classified_reference"].append(entry)
+            if coeff >= THRESHOLD and n_doi not in processed_session:
+                if not any(q[0] == n_doi for q in queue):
+                    print(f"    找到高相关邻居: {n_doi} (Sim: {coeff})")
+                    queue.append((n_doi, depth + 1))
 
         processed_session.add(curr_doi)
         upsert_paper(db[curr_doi])
